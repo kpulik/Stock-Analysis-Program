@@ -2,7 +2,7 @@
 def main():
     
     # Replace with your API key - its free
-    API_KEY = "cnps2npr01qgjjvr3fjgcnps2npr01qgjjvr3fk0"
+    API_KEY = "YOUR_API_KEY"
     
     """
     Presents the user with 3 options and runs the corresponding script.
