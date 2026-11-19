@@ -1,0 +1,292 @@
+{
+  "candidate": "news",
+  "control": "prices",
+  "evaluation_dates": [
+    "2019-01-02",
+    "2019-12-31"
+  ],
+  "sha256": {
+    "bars": "87355faa32b32869d37131ac386fcb4674fab4709ab153830176c8172a4408e5",
+    "events": "222dbf98db1a27cefe9bb96b4bb1a57bbd7886767bf202de75c9aafb010f2a2b",
+    "replay": "d52aa78b91c5eeb103c0fb829dcde76fe447b2349bc3e44d75de933f95244a50",
+    "universe": "7537bd54a31764b495707cbe0947f3a187348340c59c13beb9951ab4a5992357",
+    "archive": "bc3f451f02a32f61ab93e2d7dcaafa633702a83e91c74220ecf4145abbeb2e30"
+  },
+  "runtime": {
+    "python": "3.12.14",
+    "pandas": "3.1.1",
+    "numpy": "2.5.5",
+    "scikit-learn": "1.8.0"
+  },
+  "bootstrap": {
+    "unit": "session",
+    "scheme": "circular moving blocks",
+    "block": 5,
+    "draws": 5000,
+    "seed": 20261119
+  },
+  "overall": {
+    "sessions": 252,
+    "instrument_days": 3528,
+    "session_mean_brier": {
+      "constant_50": 0.25,
+      "news": 0.25033991579198245,
+      "prices": 0.250248026018243,
+      "prices_frozen": 0.25039775554738725
+    },
+    "pooled_brier": {
+      "constant_50": 0.25,
+      "news": 0.2503399157919825,
+      "prices": 0.25024802601824303,
+      "prices_frozen": 0.2503977555473873
+    },
+    "paired": {
+      "mean_delta": 9.188977373947966e-05,
+      "interval_95": [
+        -9.228100588902068e-05,
+        0.00028238004843218387
+      ]
+    }
+  },
+  "calibration": {
+    "constant_50": [
+      {
+        "bin": "(0.4, 0.5]",
+        "n": 3528,
+        "mean_forecast": 0.5,
+        "observed_rate": 0.4895124716553288
+      }
+    ],
+    "news": [
+      {
+        "bin": "(0.2, 0.3]",
+        "n": 1,
+        "mean_forecast": 0.22497622936301975,
+        "observed_rate": 0.0
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "n": 23,
+        "mean_forecast": 0.36275110880768346,
+        "observed_rate": 0.391304347826087
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "n": 1606,
+        "mean_forecast": 0.4807397355458361,
+        "observed_rate": 0.4925280199252802
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "n": 1894,
+        "mean_forecast": 0.513679580638076,
+        "observed_rate": 0.48785638859556496
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "n": 4,
+        "mean_forecast": 0.6125378634688717,
+        "observed_rate": 0.75
+      }
+    ],
+    "prices": [
+      {
+        "bin": "(0.2, 0.3]",
+        "n": 1,
+        "mean_forecast": 0.22905085515414375,
+        "observed_rate": 0.0
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "n": 19,
+        "mean_forecast": 0.35606289648403644,
+        "observed_rate": 0.3684210526315789
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "n": 1613,
+        "mean_forecast": 0.4803157763934174,
+        "observed_rate": 0.4934903905765654
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "n": 1893,
+        "mean_forecast": 0.5131957182036048,
+        "observed_rate": 0.48758584257791865
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "n": 2,
+        "mean_forecast": 0.6081837705305424,
+        "observed_rate": 0.5
+      }
+    ],
+    "prices_frozen": [
+      {
+        "bin": "(0.2, 0.3]",
+        "n": 3,
+        "mean_forecast": 0.26299332588889285,
+        "observed_rate": 0.0
+      },
+      {
+        "bin": "(0.3, 0.4]",
+        "n": 23,
+        "mean_forecast": 0.36427662006906447,
+        "observed_rate": 0.4782608695652174
+      },
+      {
+        "bin": "(0.4, 0.5]",
+        "n": 1351,
+        "mean_forecast": 0.47931227887566,
+        "observed_rate": 0.48926720947446334
+      },
+      {
+        "bin": "(0.5, 0.6]",
+        "n": 2146,
+        "mean_forecast": 0.5165501535757079,
+        "observed_rate": 0.4906803355079217
+      },
+      {
+        "bin": "(0.6, 0.7]",
+        "n": 5,
+        "mean_forecast": 0.6093503560998853,
+        "observed_rate": 0.4
+      }
+    ]
+  },
+  "by_benchmark": {
+    "IYT": {
+      "sessions": 252,
+      "instrument_days": 1008,
+      "session_mean_brier": {
+        "constant_50": 0.25,
+        "news": 0.24960161533630718,
+        "prices": 0.24961382906717233,
+        "prices_frozen": 0.24960984174031134
+      },
+      "pooled_brier": {
+        "constant_50": 0.25,
+        "news": 0.2496016153363071,
+        "prices": 0.24961382906717225,
+        "prices_frozen": 0.24960984174031145
+      },
+      "paired": {
+        "mean_delta": -1.2213730865137596e-05,
+        "interval_95": [
+          -0.0004979738217339051,
+          0.000470705685830704
+        ]
+      }
+    },
+    "SPY": {
+      "sessions": 252,
+      "instrument_days": 504,
+      "session_mean_brier": {
+        "constant_50": 0.25,
+        "news": 0.24887939554511593,
+        "prices": 0.24882202850288582,
+        "prices_frozen": 0.24871656148066054
+      },
+      "pooled_brier": {
+        "constant_50": 0.25,
+        "news": 0.24887939554511593,
+        "prices": 0.24882202850288584,
+        "prices_frozen": 0.2487165614806606
+      },
+      "paired": {
+        "mean_delta": 5.736704223010221e-05,
+        "interval_95": [
+          -6.629549870467548e-06,
+          0.00012122066129990838
+        ]
+      }
+    },
+    "XLE": {
+      "sessions": 252,
+      "instrument_days": 1008,
+      "session_mean_brier": {
+        "constant_50": 0.25,
+        "news": 0.25135929222279346,
+        "prices": 0.25139419494485,
+        "prices_frozen": 0.251492947650694
+      },
+      "pooled_brier": {
+        "constant_50": 0.25,
+        "news": 0.2513592922227934,
+        "prices": 0.2513941949448501,
+        "prices_frozen": 0.25149294765069413
+      },
+      "paired": {
+        "mean_delta": -3.490272205669278e-05,
+        "interval_95": [
+          -0.00032470443855752345,
+          0.0002614001871404853
+        ]
+      }
+    },
+    "XLK": {
+      "sessions": 252,
+      "instrument_days": 1008,
+      "session_mean_brier": {
+        "constant_50": 0.25,
+        "news": 0.25078909994028037,
+        "prices": 0.25044905280038543,
+        "prices_frozen": 0.25093107428451966
+      },
+      "pooled_brier": {
+        "constant_50": 0.25,
+        "news": 0.2507890999402803,
+        "prices": 0.2504490528003854,
+        "prices_frozen": 0.2509310742845196
+      },
+      "paired": {
+        "mean_delta": 0.00034004713989497045,
+        "interval_95": [
+          8.325775214972738e-05,
+          0.0006053614560453829
+        ]
+      }
+    }
+  },
+  "news_coverage": {
+    "IYT": {
+      "instrument_days": 1008,
+      "with_headlines": 178
+    },
+    "SPY": {
+      "instrument_days": 504,
+      "with_headlines": 0
+    },
+    "XLE": {
+      "instrument_days": 1008,
+      "with_headlines": 298
+    },
+    "XLK": {
+      "instrument_days": 1008,
+      "with_headlines": 151
+    }
+  },
+  "covered_only": {
+    "sessions": 204,
+    "instrument_days": 627,
+    "session_mean_brier": {
+      "constant_50": 0.25,
+      "news": 0.251223740447342,
+      "prices": 0.25082720425251026,
+      "prices_frozen": 0.25042171581208006
+    },
+    "pooled_brier": {
+      "constant_50": 0.25,
+      "news": 0.2506789465017025,
+      "prices": 0.25001859359871914,
+      "prices_frozen": 0.24991954281081488
+    },
+    "paired": {
+      "mean_delta": 0.000396536194831716,
+      "interval_95": [
+        -0.0006733193550283054,
+        0.0014975717103048283
+      ]
+    }
+  }
+}

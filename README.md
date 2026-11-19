@@ -2,6 +2,8 @@
 
 Estimate the probability that each instrument beats its benchmark from the open to the close of the next decision session. Run a historical replay or record a forecast before the market opens. All outputs are research predictions.
 
+[Development roadmap](ROADMAP.md) | [Historical experiment results](research/README.md)
+
 The example universe covers technology, oil and energy, transportation, the Nasdaq Composite and the Nasdaq-100. Stocks use industry ETFs as benchmarks. The two indexes use SPY. Edit `examples/universe.csv` to select additional instruments.
 
 ## Quick start
