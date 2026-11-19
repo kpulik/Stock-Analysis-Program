@@ -142,7 +142,21 @@ def predict(fitted, rows, variant):
     return results
 
 
-def replay(frame, variants, start):
+def session_predictions(labeled, day, rows, weekly, daily):
+    """Issue paired challengers after the weekly control has enough training history."""
+    previous = labeled[labeled.date < day] if daily else None
+    for name, control in weekly.items():
+        if control is None:
+            continue
+        yield name, predict(control, rows, name)
+        if daily:
+            candidate = fit(previous, name)
+            result = predict(candidate, rows, name)
+            result["model"] = name + "_daily"
+            yield name, result
+
+
+def replay(frame, variants, start, daily=False):
     labeled = frame.dropna(subset=["target"])
     predictions = []
     frozen = None
@@ -163,9 +177,7 @@ def replay(frame, variants, start):
             control = predict(frozen, rows, "prices")
             control["model"] = "prices_frozen"
             predictions.append(control)
-        for name, model in fitted.items():
-            if model is not None:
-                predictions.append(predict(model, rows, name))
+        predictions.extend(output for _, output in session_predictions(labeled, day, rows, fitted, daily))
     if not predictions:
         raise ValueError("No eligible predictions. Supply more history or an earlier start date.")
     return pd.concat(predictions, ignore_index=True)

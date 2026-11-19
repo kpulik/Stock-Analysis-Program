@@ -11,8 +11,8 @@ import tempfile
 import numpy as np
 import pandas as pd
 
-from forecast import (VARIANTS, ZONE, cutoff, examples, fit, predict, read_bars,
-                      read_events, replay, universe)
+from forecast import (VARIANTS, ZONE, cutoff, examples, fit, read_bars,
+                      read_events, replay, session_predictions, universe)
 
 
 def write_csv(frame, path):
@@ -96,20 +96,19 @@ def live(args, pairs, bars, now, clock=None):
     today = frame[frame.date == day]
     if len(today) != len(pairs):
         raise ValueError("Insufficient recent bars for the requested universe")
-    history = frame[(frame.date < day.to_period("W-SUN").start_time) & frame.target.notna()]
-    variants = selected(events)
+    labeled = frame.dropna(subset=["target"])
+    history = labeled[labeled.date < day.to_period("W-SUN").start_time]
+    weekly = {name: fit(history, name) for name in selected(events)}
+    if any(model is None for model in weekly.values()):
+        raise ValueError("Insufficient training history before this week")
     with closing(ledger(args.db)) as db, db:
-        for name in variants:
-            fitted = fit(history, name)
-            if fitted is None:
-                raise ValueError("Insufficient training history before this week")
-            output = predict(fitted, today, name)
+        for name, output in session_predictions(labeled, day, today, weekly, daily=True):
             for index, row in output.iterrows():
                 values = today.loc[index, VARIANTS[name]].astype(float).to_json(double_precision=15)
                 db.execute("""INSERT INTO forecasts(day,symbol,model,benchmark,version,issued_at,
                             probability,features) VALUES(?,?,?,?,?,?,?,?)
                             ON CONFLICT(day,symbol,model) DO NOTHING""",
-                           (day.date().isoformat(), row.symbol, name, row.benchmark,
+                           (day.date().isoformat(), row.symbol, row.model, row.benchmark,
                             row.version, now.isoformat(), row.probability, values))
         # Reject any run crossing the cutoff before committing new predictions.
         finished = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
@@ -193,6 +192,7 @@ def main():
             command.add_argument("--end")
             command.add_argument("--out", default="data/bars.csv")
         if name == "replay":
+            command.add_argument("--daily", action="store_true", help="Include daily refits beside weekly controls")
             command.add_argument("--out", default="data/replay.csv")
     args = parser.parse_args()
     if args.command == "demo":
@@ -211,7 +211,7 @@ def main():
         return live(args, pairs, bars, now)
     events = read_events(args.events, pairs)
     frame = examples(bars, pairs, events)
-    result = replay(frame, selected(events), pd.Timestamp(args.start))
+    result = replay(frame, selected(events), pd.Timestamp(args.start), daily=args.daily)
     if "news" in selected(events):
         evaluated = result[result.model == "prices"][["date", "symbol"]]
         coverage = evaluated.merge(frame[["date", "symbol", "news_count"]],

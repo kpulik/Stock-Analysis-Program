@@ -31,7 +31,9 @@ The download uses Yahoo Finance via yfinance. Each successful download replaces 
 
 For each symbol, the model uses the prior session's excess return, its five-session average and volatility, and the benchmark's five-session average. Features use intraday returns, so a split between two sessions does not change the comparison. The target is one when that day's close/open return exceeds the benchmark's, and zero otherwise, including ties.
 
-The logistic model pools the universe and fits on labeled sessions strictly before the forecast week's Monday. Training starts after 40 examples across 20 dates. The replay saves probabilities, realized outcomes, benchmark and model versions to `data/replay.csv`. It compares weekly refits with the initial frozen price model and a constant 50% forecast. The Brier score is the mean squared difference between forecast probability and outcome. Lower scores indicate better probability forecasts for the evaluated instrument-days.
+The weekly control pools the universe and fits on labeled sessions strictly before the forecast week's Monday. Training starts after 40 examples across 20 dates. The replay saves probabilities, realized outcomes, benchmark and model versions to `data/replay.csv`. It compares weekly refits with the initial frozen price model and a constant 50% forecast. The Brier score is the mean squared difference between forecast probability and outcome. Lower scores indicate better probability forecasts for the evaluated instrument-days.
+
+Prospective predictions include a daily challenger for each eligible feature set. Each challenger refits through the preceding completed session and gets its own ledger entry. Add `--daily` to a replay to compare these challengers with weekly controls on matched dates. The original experiment command reproduces the weekly baseline.
 
 ### Company news
 

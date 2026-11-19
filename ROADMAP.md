@@ -14,7 +14,7 @@ Produce a probability before 09:25 New York time that a stock or index will outp
 | 4. Political disclosures | Pilot reported House and Senate transactions using public release timestamps, amendments, ownership and transaction direction. Shrink member-level track records toward a pooled average when samples are small. | Trace sampled rows to public filings. Use only previously resolved outcomes. Compare against the same dates with prices and news. |
 | 5. Weather exposure | Start with archived temperature forecast revisions for energy demand and storm forecasts at airline hubs. Version each company's location weights and forecast issue time. | Reproduce two historical releases. Quantify coverage and isolated model impact by industry on matched sessions. |
 | 6. Model selection | Compare regularized linear models, a tree model and a frozen incumbent. Register each candidate, training cutoff and hypothesis before evaluation. | Publish Brier, calibration, coverage, sector breakdown and uncertainty. Retain the incumbent when evidence is inconclusive. |
-| 7. Controlled adaptation | Train candidates weekly, serve in shadow alongside the incumbent, log versions and support rollback. Expand the universe with dated membership, delistings and ticker changes before making sector-wide claims. | Candidate and incumbent have at least 60 common prospective sessions. Predeclared paired loss and calibration gates pass. Reproduce rollback from the ledger. |
+| 7. Controlled adaptation | Refit candidates each trading session on previously resolved outcomes, serve in shadow alongside the incumbent, log versions and support rollback. Expand the universe with dated membership, delistings and ticker changes before making sector-wide claims. | Candidate and incumbent have at least 60 common prospective sessions. Predeclared paired loss and calibration gates pass. Reproduce rollback from the ledger. |
 
 ## Decision rules
 
@@ -30,7 +30,7 @@ Train from January 2017. Evaluate all available 2019 sessions in the starter bas
 
 ## Engineering cadence
 
-Work in tested, reviewable commits. Update the milestone evidence and record any unresolved data or operational dependency in this file. Continue from the first open acceptance criterion. Keep research data collection and model release decisions separate from trading.
+Advance engineering every calendar day. Use weekends and exchange holidays for research, reliability and testing. Work in tested, reviewable commits. Update the milestone evidence and record any unresolved data or operational dependency in this file. Continue from the first open acceptance criterion. Keep research data collection and model release decisions separate from trading.
 
 ## Milestone evidence and next work
 

@@ -34,8 +34,8 @@ class ForecastTests(unittest.TestCase):
             self.assertEqual(len(frame[frame.date == self.day]), 2)
         pd.testing.assert_frame_equal(original.loc[original.date == self.day, PRICES],
                                       revised.loc[revised.date == self.day, PRICES])
-        p1 = replay(original, ["prices"], self.day)
-        p2 = replay(revised, ["prices"], self.day)
+        p1 = replay(original, ["prices"], self.day, daily=True)
+        p2 = replay(revised, ["prices"], self.day, daily=True)
         pd.testing.assert_series_equal(p1.probability, p2.probability)
 
     def test_event_cutoff_and_timezone(self):
@@ -57,6 +57,19 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(rows[rows.model == "prices_frozen"].version.nunique(), 1)
         self.assertGreater(rows[rows.model == "prices"].version.nunique(), 1)
 
+    def test_daily_candidate_changes_with_each_completed_session(self):
+        frame = examples(self.bars, self.pairs, {})
+        reports = replay(frame, ["prices"], self.day - pd.Timedelta(days=4), daily=True)
+        versions = reports.groupby(["date", "model"]).version.first().unstack()
+        self.assertEqual(versions.prices.nunique(), 1)
+        self.assertEqual(versions.prices_daily.nunique(), 5)
+        self.assertEqual(versions.prices.iloc[0], versions.prices_daily.iloc[0])
+        with redirect_stdout(io.StringIO()):
+            live(self.args, self.pairs, self.bars, self.now, lambda: self.now)
+        with closing(ledger(self.args.db)) as db:
+            stored = dict(db.execute("SELECT model,version FROM forecasts WHERE symbol='A'"))
+        self.assertEqual(stored["prices_daily"], versions.prices_daily.iloc[-1])
+
     def test_live_rerun_and_score(self):
         with redirect_stdout(io.StringIO()):
             live(self.args, self.pairs, self.bars, self.now, lambda: self.now)
@@ -66,13 +79,13 @@ class ForecastTests(unittest.TestCase):
             with closing(ledger(self.args.db)) as db:
                 self.assertEqual(db.execute("SELECT count(*),count(outcome),min(issued_at) "
                                             "FROM forecasts").fetchone(),
-                                 (2, 0, self.now.isoformat()))
+                                 (4, 0, self.now.isoformat()))
             after_close = self.now + pd.Timedelta(hours=9)
             score(self.args, self.bars, after_close)
             score(self.args, self.bars, after_close + pd.Timedelta(hours=1))
         with closing(ledger(self.args.db)) as db:
             self.assertEqual(db.execute("SELECT count(outcome),max(scored_at) FROM forecasts").fetchone(),
-                             (2, after_close.isoformat()))
+                             (4, after_close.isoformat()))
 
     def test_early_close_holiday_and_late_run(self):
         when = pd.Timestamp("2025-11-28 14:05", tz=ZONE)
