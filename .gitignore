@@ -42,3 +42,6 @@ Thumbs.db
 /__pycache__
 .dist
 *.csv
+__pycache__/
+.venv/
+data/

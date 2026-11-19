@@ -1,201 +1,208 @@
+"""Daily market forecasts, historical replay and prospective scoring."""
+import argparse
+from contextlib import closing
+from datetime import timedelta
+import os
+from pathlib import Path
+import sqlite3
+import sys
+import tempfile
+
+import numpy as np
+import pandas as pd
+
+from forecast import (VARIANTS, ZONE, cutoff, examples, fit, predict, read_bars,
+                      read_events, replay, universe)
+
+
+def write_csv(frame, path):
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False, mode="w") as file:
+        try:
+            frame.to_csv(file, index=False)
+            file.close()
+            os.replace(file.name, destination)
+        finally:
+            Path(file.name).unlink(missing_ok=True)
+
+
+def completed_through(now):
+    """Allow today's daily bar one hour after the exchange's scheduled close."""
+    import exchange_calendars as xcals
+
+    local = now.tz_convert(ZONE)
+    day = local.date()
+    calendar = xcals.get_calendar("XNYS")
+    if calendar.is_session(str(day)):
+        if local >= calendar.session_close(str(day)) + pd.Timedelta(hours=1):
+            return day
+    return day - timedelta(days=1)
+
+
+def download(args, pairs):
+    import yfinance as yf
+
+    # The provider's end date is exclusive.
+    latest_end = completed_through(pd.Timestamp.now(tz=ZONE)) + timedelta(days=1)
+    end = pd.Timestamp(args.end).date() if args.end else latest_end
+    if end > latest_end or pd.Timestamp(args.start).date() >= end:
+        raise ValueError("Invalid date range or incomplete daily bars requested")
+    symbols = sorted(set(pairs) | set(pairs.values()))
+    quotes = yf.download(symbols, start=args.start, end=end.isoformat(), interval="1d",
+                         auto_adjust=False, actions=False, prepost=False, progress=False,
+                         group_by="ticker", multi_level_index=True, threads=False)
+    frames = []
+    for symbol in symbols:
+        if symbol not in quotes.columns.get_level_values(0):
+            raise ValueError(f"No response for {symbol}")
+        bars = quotes[symbol][["Open", "Close"]].rename(columns=str.lower)
+        bars = bars.dropna(how="all")
+        if bars.empty or bars.isna().any().any() or (bars <= 0).any().any():
+            raise ValueError(f"Missing or incomplete daily bars for {symbol}")
+        bars["date"] = bars.index.strftime("%Y-%m-%d")
+        bars["symbol"] = symbol
+        frames.append(bars[["date", "symbol", "open", "close"]])
+    result = pd.concat(frames).sort_values(["date", "symbol"])
+    write_csv(result, args.out)
+    print(f"Wrote {len(result)} daily bars to {args.out}")
+
+
+def ledger(path):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.execute("""CREATE TABLE IF NOT EXISTS forecasts (
+        day TEXT, symbol TEXT, model TEXT, benchmark TEXT NOT NULL,
+        version TEXT NOT NULL, issued_at TEXT NOT NULL, probability REAL NOT NULL,
+        features TEXT NOT NULL, outcome INTEGER, scored_at TEXT,
+        PRIMARY KEY(day,symbol,model))""")
+    return db
+
+
+def live(args, pairs, bars, now, clock=None):
+    import exchange_calendars as xcals
+
+    day = now.tz_convert(ZONE).tz_localize(None).normalize()
+    cal = xcals.get_calendar("XNYS")
+    if not cal.is_session(day) or now > cutoff(day):
+        raise ValueError("Live issuance requires a trading day at or before 09:25 New York time")
+    previous = pd.Timestamp(cal.previous_session(day)).date()
+    available = bars[bars.date.dt.date == previous]
+    missing = (set(pairs) | set(pairs.values())) - set(available.symbol)
+    if missing:
+        raise ValueError(f"Missing previous session prices for {', '.join(sorted(missing))}")
+    frame = examples(bars, pairs, read_events(args.events, pairs), live_time=now)
+    today = frame[frame.date == day]
+    if len(today) != len(pairs):
+        raise ValueError("Insufficient recent bars for the requested universe")
+    history = frame[(frame.date < day.to_period("W-SUN").start_time) & frame.target.notna()]
+    variants = selected(args)
+    with closing(ledger(args.db)) as db, db:
+        for name in variants:
+            fitted = fit(history, name)
+            if fitted is None:
+                raise ValueError("Insufficient training history before this week")
+            output = predict(fitted, today, name)
+            for index, row in output.iterrows():
+                values = today.loc[index, VARIANTS[name]].astype(float).to_json(double_precision=15)
+                db.execute("""INSERT INTO forecasts(day,symbol,model,benchmark,version,issued_at,
+                            probability,features) VALUES(?,?,?,?,?,?,?,?)
+                            ON CONFLICT(day,symbol,model) DO NOTHING""",
+                           (day.date().isoformat(), row.symbol, name, row.benchmark,
+                            row.version, now.isoformat(), row.probability, values))
+        # Reject any run crossing the cutoff before committing new predictions.
+        finished = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
+        if finished > cutoff(day):
+            raise ValueError("Issuance crossed the cutoff. No new predictions were committed.")
+        saved = pd.read_sql_query("SELECT symbol,model,benchmark,probability,issued_at FROM forecasts "
+                                  "WHERE day=? ORDER BY model,symbol", db, params=[str(day.date())])
+    print(saved.to_string(index=False))
+
+
+def score(args, bars, now):
+    past = bars[bars.date.dt.date <= completed_through(now)]
+    returns = {(str(row.date.date()), row.symbol): row.close / row.open - 1
+               for row in past.itertuples()}
+    with closing(ledger(args.db)) as db, db:
+        for day, symbol, benchmark, model in db.execute(
+                "SELECT day,symbol,benchmark,model FROM forecasts WHERE outcome IS NULL").fetchall():
+            stock = returns.get((day, symbol))
+            reference = returns.get((day, benchmark))
+            if stock is not None and reference is not None:
+                db.execute("UPDATE forecasts SET outcome=?,scored_at=? WHERE day=? AND "
+                           "symbol=? AND model=? AND outcome IS NULL",
+                           (int(stock > reference), now.isoformat(), day, symbol, model))
+        resolved = pd.read_sql_query("SELECT model,probability,outcome AS target FROM forecasts "
+                                     "WHERE outcome IS NOT NULL", db)
+        pending = db.execute("SELECT count(*) FROM forecasts WHERE outcome IS NULL").fetchone()[0]
+    print(f"Pending forecasts: {pending}")
+    if not resolved.empty:
+        summary(resolved)
+
+
+def summary(rows):
+    rows = rows.assign(brier=(rows.probability - rows.target) ** 2)
+    print(rows.groupby("model").brier.agg(["count", "mean"]).rename(
+        columns={"mean": "brier"}).to_string())
+
+
+def selected(args):
+    return list(VARIANTS) if args.events else ["prices"]
+
+
+def demo(args):
+    rng = np.random.default_rng(17)
+    days = pd.bdate_range("2023-01-02", periods=120)
+    pairs = {"DEMO1": "BENCH", "DEMO2": "BENCH"}
+    bars = [(day, symbol, 100.0, 100 + rng.normal())
+            for day in days for symbol in [*pairs, "BENCH"]]
+    frame = pd.DataFrame(bars, columns=["date", "symbol", "open", "close"])
+    result = replay(examples(frame, pairs, {}), ["prices"], days[60])
+    print("Synthetic demonstration. These scores do not measure market performance.")
+    summary(result)
+
 
 def main():
-    
-    # Replace with your API key - its free
-    API_KEY = "YOUR_API_KEY"
-    
-    """
-    Presents the user with 3 options and runs the corresponding script.
-    """
-    print("Welcome to the Stock Analysis Tool!")
-    print("Select an option:")
-    print("1. Calculate Stock Option Price")
-    print("2. Visualize Stock Data")
-    print("3. Exit Program")
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("demo")
+    for name in ["download", "replay", "predict", "score"]:
+        command = commands.add_parser(name)
+        if name != "score":
+            command.add_argument("--universe", default="examples/universe.csv")
+        if name != "download":
+            command.add_argument("--bars", default="data/bars.csv")
+        if name in {"replay", "predict"}:
+            command.add_argument("--events")
+        if name in {"predict", "score"}:
+            command.add_argument("--db", default="data/forecasts.sqlite")
+        if name in {"download", "replay"}:
+            command.add_argument("--start", required=True)
+        if name == "download":
+            command.add_argument("--end")
+            command.add_argument("--out", default="data/bars.csv")
+        if name == "replay":
+            command.add_argument("--out", default="data/replay.csv")
+    args = parser.parse_args()
+    if args.command == "demo":
+        return demo(args)
+    now = pd.Timestamp.now(tz=ZONE)
+    if args.command == "score":
+        return score(args, read_bars(args.bars), now)
+    pairs = universe(args.universe)
+    if args.command == "download":
+        return download(args, pairs)
+    bars = read_bars(args.bars)
+    if args.command == "predict":
+        return live(args, pairs, bars, now)
+    frame = examples(bars, pairs, read_events(args.events, pairs))
+    result = replay(frame, selected(args), pd.Timestamp(args.start))
+    write_csv(result, args.out)
+    summary(result)
 
-    # Get user input
-    choice = input("Enter your choice (1-3): ")
-
-
-    # Validate user input
-    if choice not in ["1", "2", "3"]:
-        print("Invalid choice. Please enter 1, 2, or 3.")
-        return
-    
-    # User Input
-    stock_tickers = input("Enter multiple stock tickers separated by commas:\n")
-    stock_tickers = stock_tickers.split(",") # Split into a list of tickers
-    
-    def get_stock_data(stock_tickers):
-        import requests
-        import pandas as pd
-
-        # Get stock data from Finnhub API
-        def get_stock_data(symbol):
-            # Make a GET request to Finnhub API to retrieve stock data for a given symbol
-            response = requests.get(f'https://finnhub.io/api/v1/quote?symbol={symbol}&token={API_KEY}')
-            
-            # Convert the response to JSON format
-            data = response.json()
-            return data
-
-        # List of company symbols for which you want to get the stock data
-        companies = stock_tickers #['AAPL', 'GOOGL', 'MSFT']
-
-        # Get the stock data for all companies and store it in a DataFrame
-        data = pd.DataFrame()
-        for company in companies:
-            # Retrieve stock data for each company symbol
-            company_data = get_stock_data(company)
-            
-            # Assign the symbol of the company to the data
-            company_data['symbol'] = company
-            
-            # Concatenate the company data to the main DataFrame
-            data = pd.concat([data, pd.DataFrame([company_data])], ignore_index=True)
-
-        # Export the data to a CSV file
-        data.to_csv('stock_data.csv', index=False)
-
-        '''
-        `c`: The closing price of the stock for the trading day.
-        `d`: The change in the stock price from the previous day's closing price.
-        `dp`: The percentage change in the stock price from the previous day's closing price.
-        `h`: The highest price the stock reached during the trading day.
-        `l`: The lowest price the stock reached during the trading day.
-        `o`: The opening price of the stock for the trading day.
-        `pc`: The previous day's closing price.
-        `t`: The Unix timestamp representing the trading day.
-        `symbol`: The stock symbol or ticker symbol representing the company or security.
-        '''
-        
-    def stock_option_price_calc():
-        import numpy as np
-        from scipy.stats import norm
-        import finnhub
-
-        finnhub_client = finnhub.Client(API_KEY)
-
-        def black_scholes(call_put, S, K, T, r, sigma):
-            """
-            Calculates the option price using the Black-Scholes-Merton model.
-
-            Args:
-                call_put (str): "c" for call option or "p" for put option.
-                S (float): Current stock price (obtained from external source).
-                K (float): Strike price of the option contract.
-                T (float): Time to expiration of the option (in years).
-                r (float): Risk-free interest rate.
-                sigma (float): Volatility of the underlying stock.
-
-            Returns:
-                float: The predicted option price based on the Black-Scholes model.
-            """
-
-            # Calculate d1 and d2
-            d1 = (np.log(S/K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-            d2 = d1 - sigma * np.sqrt(T)
-
-            # Calculate option price based on call or put
-            if call_put == "c":
-                price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-            else:
-                price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-
-            return price
-
-
-        # Loop through each ticker
-        for stock_ticker in stock_tickers:
-            stock_ticker = stock_ticker.strip()  # Remove any extra whitespace
-
-            K = float(input("Enter strike price for " + stock_ticker + ": "))
-            T = float(input("Enter time to expiration (in years) for " + stock_ticker + ": "))
-            r = float(input("Enter risk-free interest rate for " + stock_ticker + ": "))
-            sigma = float(input("Enter volatility for " + stock_ticker + ": "))
-            call_put = input("Enter 'c' for call or 'p' for put for " + stock_ticker + ": ").lower()
-
-            # Fetch real-time stock price using Finnhub API
-            quote = finnhub_client.quote(stock_ticker)
-            current_price = quote['c']
-
-            # Calculate and Output
-            predicted_price = black_scholes(call_put, current_price, K, T, r, sigma)
-            print("----------------------------------")
-            print("The predicted option price for " + stock_ticker + " according to the Black-Scholes-Merton model is:", predicted_price)
-            print("The current price of the " + stock_ticker + " stock is:", current_price)
-
-    def stock_data_vistualization():
-        from sklearn.model_selection import train_test_split
-        from sklearn.linear_model import LinearRegression
-        import pandas as pd
-        from sklearn.metrics import mean_squared_error
-        import matplotlib.pyplot as plt
-        import numpy as np
-
-        # Load the data from CSV file
-        data = pd.read_csv('stock_data.csv')
-
-        # Group the data by symbol (stock ticker)
-        grouped = data.groupby('symbol')
-
-        # Create a figure and axis objects
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-        # Iterate over each group (stock) and plot the data
-        for name, group in grouped:
-            # Drop the 'symbol' column from the predictors as it may not be relevant
-            predictors = group.drop(['o', 'symbol'], axis=1)
-            
-            # Choose the target variable to predict
-            target = group['o']
-            
-            # Create a linear regression model
-            regressor = LinearRegression()
-            
-            # Train the model using the data for this stock
-            regressor.fit(predictors, target)
-            
-            # Use the trained model to make predictions
-            y_pred = regressor.predict(predictors)
-            
-            # Plot the actual vs. predicted values for this stock
-            ax1.scatter(target, y_pred, label=name)
-
-        # Add labels and title for the actual vs. predicted plot
-        ax1.set_xlabel("Actual Values")
-        ax1.set_ylabel("Predicted Values")
-        ax1.set_title("Actual vs. Predicted Values")
-        ax1.legend()
-
-        # Plot the feature importances for the last stock
-        last_group = data.groupby('symbol').last().reset_index()  # Convert to DataFrame
-        predictors = last_group.drop(['o', 'symbol'], axis=1)
-        target = last_group['o']
-        regressor.fit(predictors, target)
-        feature_importances = np.abs(regressor.coef_)
-        ax2.bar(range(len(feature_importances)), feature_importances)
-        ax2.set_xticks(range(len(feature_importances)))
-        ax2.set_xticklabels(predictors.columns, rotation=90)
-        ax2.set_xlabel("Feature")
-        ax2.set_ylabel("Importance")
-        ax2.set_title("Feature Importances (Last Stock)")
-
-        # Adjust the spacing between subplots
-        plt.subplots_adjust(wspace=0.4)
-
-        # Show the plots
-        plt.show()
-
-    
-    # Run the chosen script based on user input
-    if choice == "1":
-        stock_option_price_calc()
-    elif choice == "2":
-        get_stock_data(stock_tickers)
-        stock_data_vistualization()
-    else:
-        print("Goodbye!")
 
 if __name__ == "__main__":
-  main()
+    try:
+        main()
+    except (OSError, ValueError, KeyError, sqlite3.Error) as exc:
+        sys.exit(f"Error: {exc}")
