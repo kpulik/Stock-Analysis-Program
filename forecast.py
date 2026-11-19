@@ -12,11 +12,12 @@ from sklearn.preprocessing import StandardScaler
 ZONE = "America/New_York"
 KINDS = ("news", "congress", "weather")
 PRICES = ["relative_last", "relative_week", "relative_volatility", "benchmark_week"]
+NEWS = ["news", "news_count"]
 VARIANTS = {
     "prices": PRICES,
-    "news": PRICES + ["news"],
-    "politics": PRICES + ["news", "congress"],
-    "weather": PRICES + list(KINDS),
+    "news": PRICES + NEWS,
+    "politics": PRICES + NEWS + ["congress"],
+    "weather": PRICES + NEWS + ["congress", "weather"],
 }
 MIN_ROWS = 40
 MIN_DAYS = 20
@@ -65,14 +66,14 @@ def cutoff(day):
     return pd.Timestamp.combine(day.date(), time(9, 25)).tz_localize(ZONE)
 
 
-def event_totals(series, cutoffs):
+def event_window(series, cutoffs):
     # Window is (forecast time - 24 hours, forecast time]. All times are UTC.
     times = series.index.as_unit("ns").asi8
     ends = pd.DatetimeIndex(cutoffs).as_unit("ns").asi8
     sums = np.r_[0.0, series.cumsum().to_numpy()]
     left = times.searchsorted(ends - pd.Timedelta(days=1).value, side="right")
     right = times.searchsorted(ends, side="right")
-    return np.clip(sums[right] - sums[left], -1, 1)
+    return np.clip(sums[right] - sums[left], -1, 1), right - left
 
 
 def examples(bars, pairs, events, live_time=None):
@@ -105,7 +106,10 @@ def examples(bars, pairs, events, live_time=None):
             cutoffs[-1] = live_time
         for kind in KINDS:
             series = events.get((symbol, kind))
-            frame[kind] = 0.0 if series is None else event_totals(series, cutoffs)
+            total, count = (0.0, 0) if series is None else event_window(series, cutoffs)
+            frame[kind] = total
+            if kind == "news":
+                frame["news_count"] = count
         parts.append(frame.dropna(subset=PRICES).reset_index())
     return pd.concat(parts, ignore_index=True).sort_values(["date", "symbol"])
 

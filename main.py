@@ -91,12 +91,13 @@ def live(args, pairs, bars, now, clock=None):
     missing = (set(pairs) | set(pairs.values())) - set(available.symbol)
     if missing:
         raise ValueError(f"Missing previous session prices for {', '.join(sorted(missing))}")
-    frame = examples(bars, pairs, read_events(args.events, pairs), live_time=now)
+    events = read_events(args.events, pairs)
+    frame = examples(bars, pairs, events, live_time=now)
     today = frame[frame.date == day]
     if len(today) != len(pairs):
         raise ValueError("Insufficient recent bars for the requested universe")
     history = frame[(frame.date < day.to_period("W-SUN").start_time) & frame.target.notna()]
-    variants = selected(args)
+    variants = selected(events)
     with closing(ledger(args.db)) as db, db:
         for name in variants:
             fitted = fit(history, name)
@@ -146,8 +147,11 @@ def summary(rows):
         columns={"mean": "brier"}).to_string())
 
 
-def selected(args):
-    return list(VARIANTS) if args.events else ["prices"]
+def selected(events):
+    kinds = {kind for _, kind in events}
+    return ["prices"] + [variant for variant, kind in
+                         (("news", "news"), ("politics", "congress"), ("weather", "weather"))
+                         if kind in kinds]
 
 
 def demo(args):
@@ -166,6 +170,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo")
+    news = commands.add_parser("news", help="Collect company headlines and export timestamped events")
+    news.add_argument("--source", choices=["yahoo", "alpaca"], default="yahoo")
+    news.add_argument("--universe", default="examples/universe.csv")
+    news.add_argument("--start")
+    news.add_argument("--end")
+    news.add_argument("--db")
+    news.add_argument("--out")
     for name in ["download", "replay", "predict", "score"]:
         command = commands.add_parser(name)
         if name != "score":
@@ -190,13 +201,25 @@ def main():
     if args.command == "score":
         return score(args, read_bars(args.bars), now)
     pairs = universe(args.universe)
+    if args.command == "news":
+        from news import collect
+        return collect(args, pairs, write_csv)
     if args.command == "download":
         return download(args, pairs)
     bars = read_bars(args.bars)
     if args.command == "predict":
         return live(args, pairs, bars, now)
-    frame = examples(bars, pairs, read_events(args.events, pairs))
-    result = replay(frame, selected(args), pd.Timestamp(args.start))
+    events = read_events(args.events, pairs)
+    frame = examples(bars, pairs, events)
+    result = replay(frame, selected(events), pd.Timestamp(args.start))
+    if "news" in selected(events):
+        evaluated = result[result.model == "prices"][["date", "symbol"]]
+        coverage = evaluated.merge(frame[["date", "symbol", "news_count"]],
+                                   on=["date", "symbol"], validate="one_to_one")
+        matches = int(coverage.news_count.gt(0).sum())
+        print(f"News available on {matches} of {len(coverage)} evaluated instrument-days.")
+        if not matches:
+            print("This replay cannot measure the value of news on these dates.")
     write_csv(result, args.out)
     summary(result)
 

@@ -31,7 +31,29 @@ For each symbol, the model uses the prior session's excess return, its five-sess
 
 The logistic model pools the universe and fits on labeled sessions strictly before the forecast week's Monday. Training starts after 40 examples across 20 dates. The replay saves probabilities, realized outcomes, benchmark and model versions to `data/replay.csv`. It compares weekly refits with the initial frozen price model and a constant 50% forecast. The Brier score is the mean squared difference between forecast probability and outcome. Lower scores indicate better probability forecasts for the evaluated instrument-days.
 
-### Historical news, congressional disclosures and weather
+### Company news
+
+Collect the currently visible Yahoo Finance RSS headlines for each instrument and pass the exported signals to the forecasting command.
+
+```sh
+python main.py news
+python main.py predict --events data/yahoo-news.csv
+```
+
+The collector archives the headline, source ID, publisher timestamp, URL, associated ticker and first observation time in SQLite. It accepts items published in the preceding 24 hours and preserves the first captured version across retries. RSS history builds from the first collection onward. Run the collector before the decision cutoff to use its latest snapshot. A sector or multi-company headline can appear in more than one ticker feed.
+
+For historical research, set `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` in your environment. The following commands use the Alpaca archive. Dates are UTC and the end date is exclusive.
+
+```sh
+python main.py news --source alpaca --start 2025-01-01 --end 2025-09-01
+python main.py replay --start 2025-05-01 --events data/alpaca-news.csv
+```
+
+The importer paginates through articles associated with the supplied universe. It dates an archived version at the later of its publication and update timestamps. This approximates public availability. Subscription delays, unavailable original versions and changes to vendor ticker tags limit historical reconstruction. Repeated imports preserve the first captured version for each article and ticker. Keep source-specific archives and compare models on dates where the chosen source has coverage. [Alpaca News API](https://docs.alpaca.markets/us/reference/news-3)
+
+The news model uses two features over the preceding 24 hours: article count and a signed headline score. Simple phrase rules capture events such as a guidance cut or an earnings beat. Unmatched and conflicting headlines score zero and still count toward coverage. These rules are a baseline for out-of-sample evaluation.
+
+### Custom news, congressional disclosures and weather
 
 Supply normalized events with a known availability timestamp. Each row associates a source event with one exposed instrument. For example, this fictional input represents a weather forecast revision affecting two businesses differently.
 
@@ -41,9 +63,9 @@ demo-storm-001,DAL,weather,2025-05-05T12:10:00Z,-0.6
 demo-storm-001,XOM,weather,2025-05-05T12:10:00Z,0.2
 ```
 
-Run `python main.py replay --start 2025-05-01 --events data/events.csv`. The replay evaluates prices alone, then prices plus news, then congressional disclosures, then weather. Valid kinds are `news`, `congress` and `weather`. The input value is a signed exposure estimate from -1 to 1. The model sums values in the preceding 24 hours for each kind and clips each sum to this range.
+Run `python main.py replay --start 2025-05-01 --events data/events.csv`. The replay evaluates prices alone and adds variants for the event kinds present in the file. Valid kinds are `news`, `congress` and `weather`. The input value is a signed exposure estimate from -1 to 1. The model sums values in the preceding 24 hours for each kind and clips each sum to this range.
 
-Use the earliest time a signal and its exact content were available. For a congressional trade, use public release time. For weather, use the release time of the forecast run. For news, use the available article version. Encode revisions as new events when released. Preserve the mapping from event IDs to source records. This release accepts user-prepared signals. Source ingestion, text scoring, politician track records and weather-to-company mapping are future work.
+Use the earliest time a signal and its exact content were available. For a congressional trade, use public release time. For weather, use the release time of the forecast run. For news, use the available article version. Encode revisions as new events when released. Preserve the mapping from event IDs to source records. Congressional disclosures and weather exposures currently require user-prepared inputs.
 
 ## Prospective forecasts
 
