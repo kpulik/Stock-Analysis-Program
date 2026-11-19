@@ -94,3 +94,21 @@ Scoring handles early closes and leaves missing outcomes pending. The app runs o
 ## Interpreting results
 
 The starter universe is a fixed illustrative basket. A study of an entire historical sector requires dated membership, delisted securities, and checks on missing bars. Provider history can be revised. Freeze the files used for each evaluation. A price-only replay serves as a baseline for testing other inputs. A prospective comparison provides stronger evidence before adopting a new model.
+
+## Experimental language and decision models
+
+The local LLM labels a headline's stated business implications for the tagged company as positive, neutral or negative. The forecast model can learn from that label and the number of completed classifications alongside the existing price, headline count and phrase-rule features. Keep the same model identifier tied to the same weights for the entire experiment. Use separate forecast databases and export paths when comparing two different extractors, since both use the forecast variant name `llm`. The collector stores the first valid score, prompt fingerprint and inference completion time. It processes recent articles only and supports bounded, resumable batches. Compare a prospective LLM cohort to the news model on identical sessions. Monitor batching and missing coverage. Until resolved training sessions include LLM scores, the new inputs have no learned predictive weight.
+
+Run a local LM Studio or llama.cpp server that supports structured output and a fixed model ID. Set `MODEL_ID` to its served model name. From the repo root run
+
+```sh
+python main.py news
+python llm_news.py --model "$MODEL_ID" --base-url http://127.0.0.1:1234/v1
+python main.py predict --events data/llm-events.csv --tree
+```
+
+The optional decision tree uses the same price inputs and weekly or daily training cutoffs as logistic regression. The first experiment fixes depth at 3 and requires 100 training examples per leaf. The simulated decision rule calls outperformance at 55% or higher, underperformance or a tie at 45% or lower, and abstains in between. The cutoffs are experimental settings. The replay prints call count, coverage, hit rate among calls and Brier loss across all forecasts. These measure directional decisions and probability quality. Trading returns would require a separate execution and cost model.
+
+```sh
+python main.py replay --start 2025-05-01 --tree --bars data/bars.csv
+```

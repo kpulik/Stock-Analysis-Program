@@ -98,7 +98,7 @@ def live(args, pairs, bars, now, clock=None):
         raise ValueError("Insufficient recent bars for the requested universe")
     labeled = frame.dropna(subset=["target"])
     history = labeled[labeled.date < day.to_period("W-SUN").start_time]
-    weekly = {name: fit(history, name) for name in selected(events)}
+    weekly = {name: fit(history, name) for name in selected(events, getattr(args, "tree", False))}
     if any(model is None for model in weekly.values()):
         raise ValueError("Insufficient training history before this week")
     with closing(ledger(args.db)) as db, db:
@@ -116,7 +116,7 @@ def live(args, pairs, bars, now, clock=None):
             raise ValueError("Issuance crossed the cutoff. No new predictions were committed.")
         saved = pd.read_sql_query("SELECT symbol,model,benchmark,probability,issued_at FROM forecasts "
                                   "WHERE day=? ORDER BY model,symbol", db, params=[str(day.date())])
-    print(saved.to_string(index=False))
+    print(paper_calls(saved).to_string(index=False))
 
 
 def score(args, bars, now):
@@ -140,16 +140,24 @@ def score(args, bars, now):
         summary(resolved)
 
 
+def paper_calls(rows):
+    probability = rows.probability
+    calls = np.select([probability >= 0.55, probability <= 0.45],
+                      ["outperform", "lag_or_tie"], default="abstain")
+    return rows.assign(paper_call=calls)
+
+
 def summary(rows):
     rows = rows.assign(brier=(rows.probability - rows.target) ** 2)
     print(rows.groupby("model").brier.agg(["count", "mean"]).rename(
         columns={"mean": "brier"}).to_string())
 
 
-def selected(events):
+def selected(events, tree=False):
     kinds = {kind for _, kind in events}
-    return ["prices"] + [variant for variant, kind in
-                         (("news", "news"), ("politics", "congress"), ("weather", "weather"))
+    controls = ["prices", "price_tree"] if tree else ["prices"]
+    return controls + [variant for variant, kind in
+                         (("news", "news"), ("llm", "llm"), ("politics", "congress"), ("weather", "weather"))
                          if kind in kinds]
 
 
@@ -184,6 +192,7 @@ def main():
             command.add_argument("--bars", default="data/bars.csv")
         if name in {"replay", "predict"}:
             command.add_argument("--events")
+            command.add_argument("--tree", action="store_true", help="Compare a shallow decision tree")
         if name in {"predict", "score"}:
             command.add_argument("--db", default="data/forecasts.sqlite")
         if name in {"download", "replay"}:
@@ -192,6 +201,7 @@ def main():
             command.add_argument("--end")
             command.add_argument("--out", default="data/bars.csv")
         if name == "replay":
+            command.add_argument("--calls", action="store_true", help="Report selective paper calls")
             command.add_argument("--daily", action="store_true", help="Include daily refits beside weekly controls")
             command.add_argument("--out", default="data/replay.csv")
     args = parser.parse_args()
@@ -211,15 +221,23 @@ def main():
         return live(args, pairs, bars, now)
     events = read_events(args.events, pairs)
     frame = examples(bars, pairs, events)
-    result = replay(frame, selected(events), pd.Timestamp(args.start), daily=args.daily)
-    if "news" in selected(events):
-        evaluated = result[result.model == "prices"][["date", "symbol"]]
-        coverage = evaluated.merge(frame[["date", "symbol", "news_count"]],
-                                   on=["date", "symbol"], validate="one_to_one")
-        matches = int(coverage.news_count.gt(0).sum())
-        print(f"News available on {matches} of {len(coverage)} evaluated instrument-days.")
-        if not matches:
-            print("This replay cannot measure the value of news on these dates.")
+    result = replay(frame, selected(events, args.tree), pd.Timestamp(args.start), daily=args.daily)
+    evaluated = result[result.model == "prices"][["date", "symbol"]]
+    for signal in ("news", "llm"):
+        if signal in selected(events):
+            column = signal + "_count"
+            coverage = evaluated.merge(frame[["date", "symbol", column]],
+                                       on=["date", "symbol"], validate="one_to_one")
+            matches = int(coverage[column].gt(0).sum())
+            print(f"{signal} available on {matches} of {len(coverage)} evaluated instrument-days.")
+            if not matches:
+                print(f"This replay cannot measure the value of {signal} on these dates.")
+    if args.calls or args.tree or "llm" in selected(events):
+        result = paper_calls(result)
+        called = result.paper_call != "abstain"
+        hit = (result.paper_call == "outperform") == result.target
+        print(result.assign(called=called, hit=hit.where(called)).groupby("model")
+              .agg(calls=("called", "sum"), coverage=("called", "mean"), hit_rate=("hit", "mean")))
     write_csv(result, args.out)
     summary(result)
 

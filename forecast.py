@@ -7,14 +7,17 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler
 
 ZONE = "America/New_York"
-KINDS = ("news", "congress", "weather")
+KINDS = ("news", "congress", "weather", "llm")
 PRICES = ["relative_last", "relative_week", "relative_volatility", "benchmark_week"]
 NEWS = ["news", "news_count"]
 VARIANTS = {
     "prices": PRICES,
+    "price_tree": PRICES,
+    "llm": PRICES + NEWS + ["llm", "llm_count"],
     "news": PRICES + NEWS,
     "politics": PRICES + NEWS + ["congress"],
     "weather": PRICES + NEWS + ["congress", "weather"],
@@ -108,8 +111,8 @@ def examples(bars, pairs, events, live_time=None):
             series = events.get((symbol, kind))
             total, count = (0.0, 0) if series is None else event_window(series, cutoffs)
             frame[kind] = total
-            if kind == "news":
-                frame["news_count"] = count
+            if kind in {"news", "llm"}:
+                frame[kind + "_count"] = count
         parts.append(frame.dropna(subset=PRICES).reset_index())
     return pd.concat(parts, ignore_index=True).sort_values(["date", "symbol"])
 
@@ -122,13 +125,17 @@ def fit(rows, variant):
     if y.nunique() < 2:
         model = (int(y.sum()) + 1) / (len(y) + 2)
     else:
-        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=500))
+        if variant == "price_tree":
+            model = DecisionTreeClassifier(max_depth=3, min_samples_leaf=100, random_state=17)
+        else:
+            model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=500))
         model.fit(rows[fields], y)
     training_hash = hashlib.sha256(
         pd.util.hash_pandas_object(rows[["date", "symbol", "benchmark", *fields, "target"]],
                                    index=False).values.tobytes()
     ).hexdigest()
-    version = hashlib.sha256(json.dumps(["logit-v1", variant, training_hash]).encode()).hexdigest()[:16]
+    algorithm = "tree-depth3-leaf100-v1" if variant == "price_tree" else "logit-v1"
+    version = hashlib.sha256(json.dumps([algorithm, variant, training_hash]).encode()).hexdigest()[:16]
     return model, version
 
 

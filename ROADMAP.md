@@ -38,3 +38,12 @@ Advance engineering every calendar day. Use weekends and exchange holidays for r
 - Stage 2 delivered a keyless historical archive importer and the first covered replay. Prices plus news failed the promotion criteria. Preserve this result. The next confirmation requires prospective dates or an independently fixed later cohort.
 - **Next engineering milestone is Stage 3.** Establish durable persistence for forward forecasts and source health, then run the price incumbent, a constant control and the news challenger on identical sessions. Persist an explicit source-coverage flag so outages cannot silently appear as neutral news. Operational acceptance requires real elapsed sessions.
 - In parallel with collecting those sessions, take Stage 4 through a small verified disclosure dataset, then Stage 5 through an archived forecast pair. The first evaluation for each feed must include sample-level provenance and a matched no-feed comparison.
+
+### Experimental challengers
+
+- The prospective LLM candidate adds a ticker-specific direction and completed-headline count to the rule-based news model. Keep the endpoint, model weights, prompt, universe and scoring policy fixed within a cohort. Test label fidelity on human-reviewed examples and collect fresh outcomes before considering promotion. Current LLM features start at inference completion.
+- The shallow price tree and fixed 45%/55% abstention rule are available for shadow runs. On the previously inspected May through August 2025 development window, the tree's Brier score was 0.252312 on 1,176 forecasts, compared with 0.250682 for logistic regression and 0.250000 for the constant control. Keep the tree experimental. This comparison does not change the daily-operations priority.
+
+The Qwen2.5-0.5B-Instruct Q4 smoke run processed 26 real article-symbol pairs. In a separate four-headline diagnostic it classified a guidance cut, a call scheduling notice and an unrelated story as positive. The model is unsuitable for deployment based on this check. Require a blinded, ticker-specific label audit before promoting any text extractor.
+
+A second local smoke test used Qwen2.5-3B-Instruct Q4_K_M, weight revision `7dabda4d13d513e3e842b20f0d435c732f172cbe`, with the same prompt. It matched the expected directions on the same four examples and four additional synthetic headlines covering contract gains, losses, a meeting notice and falling profits. This small diagnostic checks basic behavior only. Compare ticker relevance, class balance, coverage and real prospective Brier scores before release.
