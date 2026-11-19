@@ -1,0 +1,5 @@
+numpy>=1.26,<3
+pandas>=2.2,<4
+scikit-learn>=1.5,<2
+exchange-calendars>=4.8,<5
+yfinance>=0.2.65,<2

@@ -1,52 +1,70 @@
+# Stock Market Forecast Lab
 
-# Stock Analysis Tool
+Estimate the probability that each instrument beats its benchmark from the open to the close of the next decision session. Run a historical replay or record a forecast before the market opens. All outputs are research predictions.
 
-This program is designed to provide users with stock analysis functionalities, including calculating stock option prices, visualizing stock data, and more. The tool interacts with the Finnhub API to retrieve real-time stock information and performs various analyses based on user input.
+The example universe covers technology, oil and energy, transportation, the Nasdaq Composite and the Nasdaq-100. Stocks use industry ETFs as benchmarks. The two indexes use SPY. Edit `examples/universe.csv` to select additional instruments.
 
-## Usage
+## Quick start
 
-To use the Stock Analysis Tool, follow the steps below:
+Use Python 3.11 or later. From the repository root on macOS or Linux run
 
-1. **API Key Setup:**
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python main.py demo
+python -m unittest -v
+```
 
-   - Before running the program, make sure to replace the placeholder `API_KEY` with your own API key from Finnhub. You can sign up for a free API key on the Finnhub website.
-2. **Options Menu:**
+The demo generates synthetic daily prices offline. To replay real daily bars using the starter universe run
 
-   - Upon running the program, you will be presented with the following options:
-     - Calculate Stock Option Price
-     - Visualize Stock Data
-     - Exit Program
-3. **User Input:**
+```sh
+python main.py download --start 2025-01-01 --end 2025-09-01
+python main.py replay --start 2025-05-01
+```
 
-   - Enter your choice by typing the corresponding number (1, 2, or 3).
-   - For calculating stock option prices, enter multiple stock tickers separated by commas.
-   - For visualizing stock data, stock data will be retrieved based on the provided tickers.
-4. **Functionality:**
+The download uses Yahoo Finance via yfinance. Each successful download replaces the specified CSV with the entire requested range. The end date is exclusive. Include the full training history when refreshing. For a repeatable experiment keep a dated copy of the input, universe, events and output. You can also supply a CSV from another data source with `--bars`. Required columns are `date,symbol,open,close`, with one regular-session daily bar per instrument, including benchmarks.
 
-   - **Calculate Stock Option Price:** Calculates the option price using the Black-Scholes-Merton model for the specified stock tickers.
-   - **Visualize Stock Data:** Retrieves stock data from the Finnhub API, performs linear regression analysis, and visualizes the data.
+## Historical replay
 
-## Code Structure
+For each symbol, the model uses the prior session's excess return, its five-session average and volatility, and the benchmark's five-session average. Features use intraday returns, so a split between two sessions does not change the comparison. The target is one when that day's close/open return exceeds the benchmark's, and zero otherwise, including ties.
 
-The program consists of the following key functions:
+The logistic model pools the universe and fits on labeled sessions strictly before the forecast week's Monday. Training starts after 40 examples across 20 dates. The replay saves probabilities, realized outcomes, benchmark and model versions to `data/replay.csv`. It compares weekly refits with the initial frozen price model and a constant 50% forecast. The Brier score is the mean squared difference between forecast probability and outcome. Lower scores indicate better probability forecasts for the evaluated instrument-days.
 
-- **`get_stock_data(stock_tickers):`**
+### Historical news, congressional disclosures and weather
 
-  - Retrieves stock data for the specified stock tickers using the Finnhub API and saves the data to a CSV file.
-- **`stock_option_price_calc():`**
+Supply normalized events with a known availability timestamp. Each row associates a source event with one exposed instrument. For example, this fictional input represents a weather forecast revision affecting two businesses differently.
 
-  - Calculates option prices using the Black-Scholes-Merton model based on user input for strike price, time to expiration, risk-free interest rate, and volatility.
-- **`stock_data_visualization():`**
+```csv
+event_id,symbol,kind,available_at,value
+demo-storm-001,DAL,weather,2025-05-05T12:10:00Z,-0.6
+demo-storm-001,XOM,weather,2025-05-05T12:10:00Z,0.2
+```
 
-  - Visualizes stock data by performing linear regression and plotting actual vs. predicted values, as well as feature importances.
+Run `python main.py replay --start 2025-05-01 --events data/events.csv`. The replay evaluates prices alone, then prices plus news, then congressional disclosures, then weather. Valid kinds are `news`, `congress` and `weather`. The input value is a signed exposure estimate from -1 to 1. The model sums values in the preceding 24 hours for each kind and clips each sum to this range.
 
-## Running the Program
+Use the earliest time a signal and its exact content were available. For a congressional trade, use public release time. For weather, use the release time of the forecast run. For news, use the available article version. Encode revisions as new events when released. Preserve the mapping from event IDs to source records. This release accepts user-prepared signals. Source ingestion, text scoring, politician track records and weather-to-company mapping are future work.
 
-To run the Stock Analysis Tool:
+## Prospective forecasts
 
-1. Make sure you have Python installed.
-2. Install the required libraries by running `pip install pandas requests scipy matplotlib numpy scikit-learn finnhub-python` (Ideally in a virtual environment).
-3. Replace `API_KEY` with your Finnhub API key.
-4. Run the script and follow the on-screen instructions to utilize the different functionalities.
+On a U.S. trading morning, refresh prices and issue forecasts by 09:25 New York time. Use the same event file in replay and live runs. Omit the events argument for price-only forecasts.
 
-Feel free to explore and analyze stock data efficiently with this tool!
+```sh
+python main.py download --start 2024-01-01
+python main.py predict --db data/forecasts.sqlite
+```
+
+The forecast uses information available through invocation. It requires prior-session bars for every instrument and benchmark. SQLite retains the first forecast for each day, symbol and model, together with its issue time, input features, training version and benchmark. Use separate databases for different research universes or experiments.
+
+After the scheduled close plus one hour, refresh the daily bars and score the outstanding forecasts.
+
+```sh
+python main.py download --start 2024-01-01
+python main.py score --db data/forecasts.sqlite
+```
+
+Scoring handles early closes and leaves missing outcomes pending. The app runs on demand. Continuous feeds, scheduled runs and automatic model promotion are outside this release.
+
+## Interpreting results
+
+The starter universe is a fixed illustrative basket. A study of an entire historical sector requires dated membership, delisted securities, and checks on missing bars. Provider history can be revised. Freeze the files used for each evaluation. A price-only replay serves as a baseline for testing other inputs. A prospective comparison provides stronger evidence before adopting a new model.
