@@ -98,18 +98,32 @@ def live(args, pairs, bars, now, clock=None):
         raise ValueError("Insufficient recent bars for the requested universe")
     labeled = frame.dropna(subset=["target"])
     history = labeled[labeled.date < day.to_period("W-SUN").start_time]
-    weekly = {name: fit(history, name) for name in selected(events, getattr(args, "tree", False))}
+    variants = selected(events, getattr(args, "tree", False))
+    if getattr(args, "news_healthy", False) and "news" not in variants:
+        variants.append("news")
+    weekly = {name: fit(history, name) for name in variants}
     if any(model is None for model in weekly.values()):
         raise ValueError("Insufficient training history before this week")
     with closing(ledger(args.db)) as db, db:
-        for name, output in session_predictions(labeled, day, today, weekly, daily=True):
+        outputs = list(session_predictions(labeled, day, today, weekly, daily=True))
+        operational = getattr(args, "operational", False)
+        if operational:
+            control = today.assign(model="constant_50", version="constant-0.5", probability=0.5)
+            outputs.append(("prices", control))
+        db.execute("BEGIN IMMEDIATE")
+        existing = db.execute("SELECT 1 FROM forecasts WHERE day=? LIMIT 1",
+                              (day.date().isoformat(),)).fetchone()
+        issued = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
+        for name, output in outputs:
+            if operational and existing:
+                break
             for index, row in output.iterrows():
                 values = today.loc[index, VARIANTS[name]].astype(float).to_json(double_precision=15)
                 db.execute("""INSERT INTO forecasts(day,symbol,model,benchmark,version,issued_at,
                             probability,features) VALUES(?,?,?,?,?,?,?,?)
                             ON CONFLICT(day,symbol,model) DO NOTHING""",
                            (day.date().isoformat(), row.symbol, row.model, row.benchmark,
-                            row.version, now.isoformat(), row.probability, values))
+                            row.version, issued.isoformat(), row.probability, values))
         # Reject any run crossing the cutoff before committing new predictions.
         finished = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
         if finished > cutoff(day):

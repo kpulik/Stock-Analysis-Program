@@ -112,3 +112,16 @@ The optional decision tree uses the same price inputs and weekly or daily traini
 ```sh
 python main.py replay --start 2025-05-01 --tree --bars data/bars.csv
 ```
+
+### Operating the private prospective ledger
+
+Restore the latest private `market-forecast-operations.sqlite` checkpoint before each run. Use a single writer and version-checked checkpoint replacement. Preserve successful captures and audit records even when the forecast window was missed. Keep the database outside git. A fresh installation starts with `python operations.py capture`.
+
+| Command | Effect |
+| --- | --- |
+| `python operations.py capture` | Poll each ticker, record the time, eligible article count or error, and retain hashed event IDs and derived scores. A reachable feed with zero eligible stories has an explicit zero. |
+| `python operations.py issue` | Refresh daily prices and news, then commit a single premarket forecast batch with a shared issue time. Include weekly and daily price models and the 50% control. Include both news models when every ticker poll succeeds. |
+| `python operations.py settle` | Fetch bars and resolve previously issued rows using the exchange calendar and close-plus-one-hour rule. |
+| `python operations.py audit` | Report issued and settled counts and record an empty trading session after the cutoff as missed. |
+
+A failed news poll suppresses the news comparison for the whole session. Retries retain the first complete forecast batch. Poll counts measure eligible items observed at polling time. They cannot establish continuous provider coverage between polls. The operations commands run on invocation.
