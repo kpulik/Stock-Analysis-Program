@@ -73,7 +73,7 @@ Use the earliest time a signal and its exact content were available. For a congr
 
 ## Prospective forecasts
 
-On a U.S. trading morning, refresh prices and issue forecasts by 09:25 New York time. Use the same event file in replay and live runs. Omit the events argument for price-only forecasts.
+On a U.S. trading morning, refresh prices and issue forecasts before 09:25 New York time. Use the same event file in replay and live runs. Omit the events argument for price-only forecasts.
 
 ```sh
 python main.py download --start 2024-01-01
@@ -120,7 +120,7 @@ Restore the latest private `market-forecast-operations.sqlite` checkpoint before
 | Command | Effect |
 | --- | --- |
 | `python operations.py capture` | Poll each ticker, record the time, eligible article count or error, and retain hashed event IDs and derived scores. A reachable feed with zero eligible stories has an explicit zero. |
-| `python operations.py issue` | Refresh daily prices and news, then commit a single premarket forecast batch with a shared issue time. Include weekly and daily price models and the 50% control. Include both news models when every ticker poll succeeds. |
+| `python operations.py issue` | Refresh daily prices and news, then commit a single premarket forecast batch with a shared issue time. Include daily and weekly price fits, the frozen first weekly price fit and the 50% control. The frozen parameters are saved in the same transaction as the first eligible batch. Include both news models when every ticker poll succeeds. |
 | `python operations.py settle` | Fetch bars and resolve previously issued rows using the exchange calendar and close-plus-one-hour rule. |
 | `python operations.py audit` | Report issued and settled counts and record an empty trading session after the cutoff as missed. |
 

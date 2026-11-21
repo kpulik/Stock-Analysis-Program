@@ -2,6 +2,7 @@
 import argparse
 from contextlib import closing
 from datetime import timedelta
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -11,7 +12,9 @@ import tempfile
 import numpy as np
 import pandas as pd
 
-from forecast import (VARIANTS, ZONE, cutoff, examples, fit, read_bars,
+from scipy.special import expit
+
+from forecast import (PRICES, VARIANTS, ZONE, cutoff, examples, fit, read_bars,
                       read_events, replay, session_predictions, universe)
 
 
@@ -79,13 +82,44 @@ def ledger(path):
     return db
 
 
+def frozen_prices(db, weekly_fit, today, day):
+    """Pin the first issued weekly price fit inside the forecast transaction."""
+    db.execute("""CREATE TABLE IF NOT EXISTS frozen_prices (
+        id INTEGER PRIMARY KEY CHECK(id=1), first_session TEXT NOT NULL,
+        version TEXT NOT NULL, parameters TEXT NOT NULL)""")
+    record = db.execute("SELECT version,parameters FROM frozen_prices WHERE id=1").fetchone()
+    if record is None:
+        model, version = weekly_fit
+        if isinstance(model, float):
+            params = {"probability": model}
+        else:
+            scaler, logit = model.named_steps["standardscaler"], model.named_steps["logisticregression"]
+            params = dict(fields=list(scaler.feature_names_in_), mean=scaler.mean_.tolist(),
+                          scale=scaler.scale_.tolist(), coef=logit.coef_[0].tolist(),
+                          intercept=float(logit.intercept_[0]))
+        db.execute("INSERT INTO frozen_prices VALUES(1,?,?,?)",
+                   (day.date().isoformat(), version, json.dumps(params, allow_nan=False)))
+    else:
+        version, payload = record
+        params = json.loads(payload)
+    if "probability" in params:
+        probability = params["probability"]
+    else:
+        if params["fields"] != PRICES:
+            raise ValueError("Frozen price feature schema changed")
+        x = today[params["fields"]].to_numpy()
+        z = (x - params["mean"]) / params["scale"]
+        probability = expit(z @ params["coef"] + params["intercept"])
+    return today.assign(model="prices_frozen", version=version, probability=probability)
+
+
 def live(args, pairs, bars, now, clock=None):
     import exchange_calendars as xcals
 
     day = now.tz_convert(ZONE).tz_localize(None).normalize()
     cal = xcals.get_calendar("XNYS")
-    if not cal.is_session(day) or now > cutoff(day):
-        raise ValueError("Live issuance requires a trading day at or before 09:25 New York time")
+    if not cal.is_session(day) or now >= cutoff(day):
+        raise ValueError("Live issuance requires a trading day before 09:25 New York time")
     previous = pd.Timestamp(cal.previous_session(day)).date()
     available = bars[bars.date.dt.date == previous]
     missing = (set(pairs) | set(pairs.values())) - set(available.symbol)
@@ -113,6 +147,8 @@ def live(args, pairs, bars, now, clock=None):
         db.execute("BEGIN IMMEDIATE")
         existing = db.execute("SELECT 1 FROM forecasts WHERE day=? LIMIT 1",
                               (day.date().isoformat(),)).fetchone()
+        if operational and not existing:
+            outputs.append(("prices", frozen_prices(db, weekly["prices"], today, day)))
         issued = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
         for name, output in outputs:
             if operational and existing:
@@ -124,12 +160,12 @@ def live(args, pairs, bars, now, clock=None):
                             ON CONFLICT(day,symbol,model) DO NOTHING""",
                            (day.date().isoformat(), row.symbol, row.model, row.benchmark,
                             row.version, issued.isoformat(), row.probability, values))
-        # Reject any run crossing the cutoff before committing new predictions.
-        finished = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
-        if finished > cutoff(day):
-            raise ValueError("Issuance crossed the cutoff. No new predictions were committed.")
         saved = pd.read_sql_query("SELECT symbol,model,benchmark,probability,issued_at FROM forecasts "
                                   "WHERE day=? ORDER BY model,symbol", db, params=[str(day.date())])
+        # Reject any run crossing the cutoff before committing new predictions.
+        finished = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
+        if finished >= cutoff(day):
+            raise ValueError("Issuance crossed the cutoff. No new predictions were committed.")
     print(paper_calls(saved).to_string(index=False))
 
 

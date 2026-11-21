@@ -52,7 +52,7 @@ def audit(db, now):
     issued, settled = db.execute("SELECT count(*),count(outcome) FROM forecasts WHERE day=?",
                                  (str(day.date()),)).fetchone()
     session = xcals.get_calendar("XNYS").is_session(day)
-    if session and local > cutoff(day) and not issued:
+    if session and local >= cutoff(day) and not issued:
         with db:
             db.execute("INSERT OR IGNORE INTO missed_sessions VALUES(?,?)",
                        (str(day.date()), now.isoformat()))
@@ -70,7 +70,7 @@ def run(args):
             return
         if args.action == "capture":
             return capture(db, pairs)
-        if args.action == "issue" and (not session or now > cutoff(day)):
+        if args.action == "issue" and (not session or now >= cutoff(day)):
             raise ValueError("Outside premarket issuance window")
         path = Path(scratch) / "bars.csv"
         download(argparse.Namespace(start=args.start, end=None, out=path), pairs)

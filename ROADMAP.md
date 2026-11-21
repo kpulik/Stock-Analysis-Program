@@ -50,4 +50,24 @@ A second local smoke test used Qwen2.5-3B-Instruct Q4_K_M, weight revision `7dab
 
 **2026-11-20 prospective operations.** Shipped private-ledger feed capture, first-batch issuance with an explicit 50% control, and settlement through the existing exchange-calendar rules. Captured 143 distinct article-symbol signals from 14 successful ticker polls. Zero forecasts were issued for November 20. A late issue attempt was rejected and the session was recorded as missed. The private database checkpoint passed SQLite integrity checking. A restart test issued and settled synthetic rows and verified that a retry after an outage cannot add a news challenger to an earlier price-only batch. The 2019 benchmark is unchanged.
 
-**Next acceptance step.** Connect the timed issuer and settler to the versioned private checkpoint and verify restoration before counting the first real session. Continue recording all misses. Compare daily and weekly price and news forecasts only on common sessions with successful source checks; keep the existing frozen historical control. Add a persisted frozen prospective model before evaluating the promotion gate. A successful zero-count feed response measures a poll, not complete news coverage. Automatic timing and five real settled sessions remain outstanding.
+**November 20 handoff.** Connect the timed issuer and settler to the versioned private checkpoint and verify restoration before counting the first real session. Continue recording all misses. Compare daily and weekly price and news forecasts only on common sessions with successful source checks; keep the existing frozen historical control. Add a persisted frozen prospective model before evaluating the promotion gate. A successful zero-count feed response measures a poll, not complete news coverage. Automatic timing and five real settled sessions remain outstanding.
+
+### November 21, 2026. Prospective controls and checkpoint recovery
+
+- Restored the private SQLite checkpoint, verified the November 20 miss, and saved version 1 after 14 successful Saturday polls. They returned 130 eligible article-symbol observations, including two polls with zero items. SQLite integrity passed. The real-clock issuer rejected Saturday. The ledger contains zero real forecasts and zero settled sessions.
+- The first successful operational batch now pins the weekly price model parameters and training version in the forecast transaction. Starting at 09:25:00 New York time, issuance is closed. A missed deadline rolls back the forecasts and initial fit together. An older issued batch stays intact on retry. Later sessions use the saved scaler and logistic coefficients or the original single-class probability.
+- Verification: 24 tests passed. A restart and revised historical bars reproduced the original frozen fit's predictions within relative tolerance 1e-12. A separate synthetic end-to-end check issued 12 forecasts over two instruments and six models, then settled all 12 in a fresh process. These observations are excluded from prospective evidence.
+- Before the first real batch, lock daily price versus weekly price as the refit comparison, with frozen prices and 50% alongside. Compare daily news versus weekly news on the intersection of healthy, settled instrument-days and daily news versus daily prices on those same rows. Keep the 60-session promotion gate and the 2019 benchmark.
+
+### Weather pilot source check
+
+The first two sampled NHC Helene forecast advisories each supply a nine-hour-ahead wind forecast. Times below are UTC. On September 25, 2024 the research cutoff was 13:25 UTC.
+
+| Advisory | Bulletin issue time | Forecast valid time | Maximum wind forecast | Before that day's cutoff by bulletin time? |
+| --- | --- | --- | ---: | --- |
+| [8](https://www.nhc.noaa.gov/archive/2024/al09/al092024.fstadv.008.shtml) | Sep 25 09:00 | Sep 25 18:00 | 70 kt | Yes |
+| [9](https://www.nhc.noaa.gov/archive/2024/al09/al092024.fstadv.009.shtml) | Sep 25 15:00 | Sep 26 00:00 | 85 kt | No |
+
+These have different valid times. A revision comparison requires the same valid time and location. The archive supplies bulletin times. Live use also requires first-observed timestamps. Before scoring weather, fix airline hub exposures and compare the immediate predecessor with and without the weather feature on the exact same settled airline-days. No weather outcomes have been scored.
+
+**Next action.** Connect a timed premarket issuer and post-close settler to the private ledger with version-checked writes. Verify an unattended restore, collect five real settled sessions, and keep auditing misses. The weekend restore verifies storage only. A real feed outage and live model comparisons remain unobserved.
