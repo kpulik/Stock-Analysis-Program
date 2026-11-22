@@ -9,7 +9,7 @@ import exchange_calendars as xcals
 import pandas as pd
 
 from forecast import ZONE, cutoff, read_bars, universe
-from main import download, ledger, live, score, write_csv
+from main import completed_through, download, ledger, live, score, write_csv
 from news import headline_score, yahoo
 
 
@@ -21,6 +21,9 @@ def initialize(db):
         CREATE TABLE IF NOT EXISTS news_signals(
             event_id TEXT, symbol TEXT, available_at TEXT, value INTEGER,
             PRIMARY KEY(event_id, symbol));
+        CREATE TABLE IF NOT EXISTS audit_cursor(id INTEGER PRIMARY KEY CHECK(id=1), day TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS price_checks(
+            observed_at TEXT PRIMARY KEY, action TEXT NOT NULL, status TEXT NOT NULL, error TEXT);
         CREATE TABLE IF NOT EXISTS missed_sessions(day TEXT PRIMARY KEY, observed_at TEXT);
     """)
 
@@ -51,32 +54,78 @@ def audit(db, now):
     day = local.tz_localize(None).normalize()
     issued, settled = db.execute("SELECT count(*),count(outcome) FROM forecasts WHERE day=?",
                                  (str(day.date()),)).fetchone()
-    session = xcals.get_calendar("XNYS").is_session(day)
-    if session and local >= cutoff(day) and not issued:
-        with db:
-            db.execute("INSERT OR IGNORE INTO missed_sessions VALUES(?,?)",
-                       (str(day.date()), now.isoformat()))
+    calendar = xcals.get_calendar("XNYS")
+    session = calendar.is_session(day)
+    with db:
+        db.execute("BEGIN IMMEDIATE")
+        # Legacy ledgers start at the earliest documented operational session.
+        db.execute("""INSERT OR IGNORE INTO audit_cursor
+                      SELECT 1, min(day) FROM (SELECT min(day) AS day FROM forecasts
+                      UNION ALL SELECT min(day) FROM missed_sessions UNION ALL SELECT ?)""",
+                   (str(day.date()),))
+        start = pd.Timestamp(db.execute("SELECT day FROM audit_cursor").fetchone()[0])
+        end = day if local >= cutoff(day) else day - pd.Timedelta(days=1)
+        if start <= end:
+            for date in calendar.sessions_in_range(start, end):
+                key = str(date.date())
+                db.execute("""INSERT OR IGNORE INTO missed_sessions SELECT ?,?
+                              WHERE NOT EXISTS(SELECT 1 FROM forecasts WHERE day=?)""",
+                           (key, now.isoformat(), key))
+            db.execute("UPDATE audit_cursor SET day=?", (str((end + pd.Timedelta(days=1)).date()),))
     print(f"{day.date()} session={session} forecasts={issued} settled={settled}")
     return session, day
 
 
-def run(args):
+def timed_action(db, session, day, now):
+    """Choose one due action when invoked by a private runner."""
+    deadline = cutoff(day)
+    if session and deadline - pd.Timedelta(minutes=25) <= now < deadline:
+        if not db.execute("SELECT 1 FROM forecasts WHERE day=? LIMIT 1", (str(day.date()),)).fetchone():
+            return "issue"
+    if db.execute("SELECT 1 FROM forecasts WHERE outcome IS NULL AND day<=? LIMIT 1",
+                  (completed_through(now).isoformat(),)).fetchone():
+        return "settle"
+    return "idle"
+
+
+def run(args, clock=None):
+    if clock is None:
+        clock = lambda: pd.Timestamp.now(tz=ZONE)
+    if args.action == "timed" and not Path(args.db).is_file():
+        raise ValueError("Restore the private ledger before timed operation")
     pairs = universe(args.universe)
     with closing(ledger(args.db)) as db, tempfile.TemporaryDirectory() as scratch:
+        if args.action == "timed" and not db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='news_checks'").fetchone():
+            raise ValueError("Timed operation requires an initialized private ledger")
         initialize(db)
-        now = pd.Timestamp.now(tz=ZONE)
+        now = clock()
         session, day = audit(db, now)
-        if args.action == "audit":
+        action = timed_action(db, session, day, now) if args.action == "timed" else args.action
+        if action == "idle":
+            print("No forecast or settlement due")
             return
-        if args.action == "capture":
+        if action == "audit":
+            return
+        if action == "capture":
             return capture(db, pairs)
-        if args.action == "issue" and (not session or now >= cutoff(day)):
+        if action == "issue" and (not session or now >= cutoff(day)):
             raise ValueError("Outside premarket issuance window")
         path = Path(scratch) / "bars.csv"
-        download(argparse.Namespace(start=args.start, end=None, out=path), pairs)
-        bars = read_bars(path)
-        if args.action == "settle":
-            score(args, bars, pd.Timestamp.now(tz=ZONE))
+        try:
+            download(argparse.Namespace(start=args.start, end=None, out=path), pairs)
+            bars = read_bars(path)
+        except Exception as exc:
+            with db:
+                db.execute("INSERT INTO price_checks VALUES(?,?,?,?)",
+                           (pd.Timestamp.now(tz="UTC").isoformat(), action, "error", type(exc).__name__))
+            audit(db, clock())
+            raise
+        with db:
+            db.execute("INSERT INTO price_checks VALUES(?,?,?,NULL)",
+                       (pd.Timestamp.now(tz="UTC").isoformat(), action, "ok"))
+        if action == "settle":
+            score(args, bars, clock())
             return
         healthy = capture(db, pairs)
         args.operational = True
@@ -89,14 +138,17 @@ def run(args):
             write_csv(signals[signals.symbol.isin(pairs)], args.events)
         # Recheck after network I/O. A run that crosses the cutoff is missed.
         try:
-            live(args, pairs, bars, pd.Timestamp.now(tz=ZONE))
+            ready = clock()
+            if ready.tz_convert(ZONE).date() != day.date():
+                raise ValueError("Target session changed during data refresh")
+            live(args, pairs, bars, ready, clock)
         finally:
-            audit(db, pd.Timestamp.now(tz=ZONE))
+            audit(db, clock())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["audit", "capture", "issue", "settle"])
+    parser.add_argument("action", choices=["audit", "capture", "issue", "settle", "timed"])
     parser.add_argument("--db", default="data/market-forecast-operations.sqlite")
     parser.add_argument("--universe", default="examples/universe.csv")
     parser.add_argument("--start", default="2024-01-01")

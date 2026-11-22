@@ -4,13 +4,14 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
 from forecast import examples, fit, predict
 from main import ledger, live, score
-from operations import audit, capture, initialize
+from operations import audit, capture, initialize, run, timed_action
 
 
 class OperationsTests(unittest.TestCase):
@@ -102,3 +103,47 @@ class OperationsTests(unittest.TestCase):
                 self.assertEqual(frozen, weekly)
                 self.assertEqual(len(frozen), 1)
                 self.assertGreater(frozen[0][1], 0.5)
+
+    def test_timed_recovery_after_holiday_and_price_outage(self):
+        pairs = {"A": "ETF", "B": "ETF"}
+        days = pd.bdate_range(end="2025-11-28", periods=90)
+        days = days.drop(pd.Timestamp("2025-11-27"))
+        bars = pd.DataFrame([(d, s, 100., 100 + (i + j) % 3) for i, d in enumerate(days)
+                             for j, s in enumerate([*pairs, "ETF"])],
+                            columns=["date", "symbol", "open", "close"])
+        friday = pd.Timestamp("2025-11-28 09:05", tz="America/New_York")
+        with tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()):
+            args = Namespace(action="timed", db=Path(folder) / "ops.sqlite",
+                             universe=Path(folder) / "universe.csv", start="2025-01-01")
+            pd.DataFrame(pairs.items(), columns=["symbol", "benchmark"]).to_csv(args.universe, index=False)
+            with self.assertRaisesRegex(ValueError, "Restore"):
+                run(args)
+            with closing(ledger(args.db)) as db:
+                initialize(db)
+                audit(db, friday - pd.Timedelta(days=2))
+            with patch("operations.download", side_effect=TimeoutError):
+                with self.assertRaises(TimeoutError):
+                    run(args, lambda: friday)
+            def quotes(request, universe):
+                bars.to_csv(request.out, index=False)
+            with patch("operations.download", side_effect=quotes) as downloads, patch("operations.capture", return_value=True):
+                run(args, lambda: friday)
+                run(args, lambda: friday + pd.Timedelta(minutes=1))
+                run(args, lambda: friday.replace(hour=13, minute=59))
+                self.assertEqual(downloads.call_count, 1)
+                run(args, lambda: friday.replace(hour=14, minute=0))
+                run(args, lambda: friday + pd.Timedelta(days=2))
+                self.assertEqual(downloads.call_count, 2)
+            with closing(ledger(args.db)) as db:
+                self.assertEqual(db.execute("SELECT day FROM missed_sessions").fetchall(), [("2025-11-26",)])
+                self.assertEqual(db.execute("SELECT count(*),count(outcome) FROM forecasts").fetchone(), (12, 12))
+                self.assertEqual(db.execute("SELECT action,status,error FROM price_checks ORDER BY observed_at").fetchall(),
+                                 [("issue","error","TimeoutError"), ("issue","ok",None), ("settle","ok",None)])
+
+    def test_issue_window_tracks_exchange_clock_across_dst(self):
+        with closing(ledger(":memory:")) as db:
+            for day, hour in [("2025-10-31", 13), ("2025-11-03", 14)]:
+                start = pd.Timestamp(day, tz="UTC") + pd.Timedelta(hours=hour)
+                for seconds, action in [(-1, "idle"), (0, "issue"), (1499, "issue"), (1500, "idle")]:
+                    now = start + pd.Timedelta(seconds=seconds)
+                    self.assertEqual(timed_action(db, True, pd.Timestamp(day), now), action)
