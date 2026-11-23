@@ -147,3 +147,18 @@ class OperationsTests(unittest.TestCase):
                 for seconds, action in [(-1, "idle"), (0, "issue"), (1499, "issue"), (1500, "idle")]:
                     now = start + pd.Timedelta(seconds=seconds)
                     self.assertEqual(timed_action(db, True, pd.Timestamp(day), now), action)
+
+    def test_probe_rejects_stale_benchmark_without_forecasting(self):
+        now = pd.Timestamp("2026-11-23 09:03", tz="America/New_York")
+        with tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()):
+            args = Namespace(action="probe", db=Path(folder) / "ops.sqlite",
+                             universe=Path(folder) / "pairs.csv", start="2026-11-19")
+            args.universe.write_text("symbol,benchmark\nA,ETF\n")
+            def stale(request, pairs):
+                request.out.write_text("date,symbol,open,close\n2026-11-20,A,2,2\n2026-11-19,ETF,1,1\n")
+            with patch("operations.download", side_effect=stale):
+                with self.assertRaisesRegex(ValueError, "ETF"):
+                    run(args, lambda: now)
+            with closing(ledger(args.db)) as db:
+                self.assertEqual(db.execute("SELECT status FROM price_checks").fetchone(), ("error",))
+                self.assertEqual(db.execute("SELECT count(*) FROM forecasts").fetchone(), (0,))

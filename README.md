@@ -127,3 +127,7 @@ Restore the latest private `market-forecast-operations.sqlite` checkpoint before
 A failed news poll suppresses the news comparison for the whole session. Retries retain the first complete forecast batch. Poll counts measure eligible items observed at polling time. They cannot establish continuous provider coverage between polls. The operations commands run on invocation.
 
 For a private timer, invoke `python operations.py timed --db PATH` after restoring the checkpoint. Each invocation audits elapsed sessions and performs at most one due action. It prioritizes an unissued trading session from 09:00 until just before 09:25 New York time. Otherwise it settles eligible pending rows, including older sessions after downtime. Idle runs skip network access. The caller must retain ledger updates, including missed sessions and failed price checks, on error as well as success. This command runs once per invocation.
+
+Use `python operations.py probe --db PATH` for an engineering check of live price retrieval. It verifies every configured symbol and benchmark has a bar for the latest eligible exchange session, records the attempt and issues zero forecasts.
+
+Use `python weather.py --db PATH` with the private ledger to archive the registered pilot stations' decoded TAF groups, UTC issue and first-observed times, and bulletin fingerprints. A missing station produces a nonzero exit after retaining any stations received. This research command runs independently of forecast issuance.

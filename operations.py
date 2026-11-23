@@ -9,7 +9,7 @@ import exchange_calendars as xcals
 import pandas as pd
 
 from forecast import ZONE, cutoff, read_bars, universe
-from main import completed_through, download, ledger, live, score, write_csv
+from main import completed_through, download, ledger, live, require_session_prices, score, write_csv
 from news import headline_score, yahoo
 
 
@@ -115,6 +115,10 @@ def run(args, clock=None):
         try:
             download(argparse.Namespace(start=args.start, end=None, out=path), pairs)
             bars = read_bars(path)
+            if action in {"probe", "issue"}:
+                calendar = xcals.get_calendar("XNYS")
+                required = calendar.date_to_session(str(completed_through(now)), direction="previous")
+                require_session_prices(bars, pairs, required.date())
         except Exception as exc:
             with db:
                 db.execute("INSERT INTO price_checks VALUES(?,?,?,?)",
@@ -124,6 +128,9 @@ def run(args, clock=None):
         with db:
             db.execute("INSERT INTO price_checks VALUES(?,?,?,NULL)",
                        (pd.Timestamp.now(tz="UTC").isoformat(), action, "ok"))
+        if action == "probe":
+            print(f"Verified {len(set(pairs) | set(pairs.values()))} instruments for {required.date()}")
+            return
         if action == "settle":
             score(args, bars, clock())
             return
@@ -148,7 +155,7 @@ def run(args, clock=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["audit", "capture", "issue", "settle", "timed"])
+    parser.add_argument("action", choices=["audit", "capture", "issue", "settle", "timed", "probe"])
     parser.add_argument("--db", default="data/market-forecast-operations.sqlite")
     parser.add_argument("--universe", default="examples/universe.csv")
     parser.add_argument("--start", default="2024-01-01")

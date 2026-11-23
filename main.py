@@ -113,6 +113,13 @@ def frozen_prices(db, weekly_fit, today, day):
     return today.assign(model="prices_frozen", version=version, probability=probability)
 
 
+def require_session_prices(bars, pairs, previous):
+    available = bars[bars.date.dt.date == previous]
+    missing = (set(pairs) | set(pairs.values())) - set(available.symbol)
+    if missing:
+        raise ValueError(f"Missing required session prices for {', '.join(sorted(missing))}")
+
+
 def live(args, pairs, bars, now, clock=None):
     import exchange_calendars as xcals
 
@@ -120,11 +127,7 @@ def live(args, pairs, bars, now, clock=None):
     cal = xcals.get_calendar("XNYS")
     if not cal.is_session(day) or now >= cutoff(day):
         raise ValueError("Live issuance requires a trading day before 09:25 New York time")
-    previous = pd.Timestamp(cal.previous_session(day)).date()
-    available = bars[bars.date.dt.date == previous]
-    missing = (set(pairs) | set(pairs.values())) - set(available.symbol)
-    if missing:
-        raise ValueError(f"Missing previous session prices for {', '.join(sorted(missing))}")
+    require_session_prices(bars, pairs, pd.Timestamp(cal.previous_session(day)).date())
     events = read_events(args.events, pairs)
     frame = examples(bars, pairs, events, live_time=now)
     today = frame[frame.date == day]
