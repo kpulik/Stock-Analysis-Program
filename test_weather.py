@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import sqlite3
 import unittest
 
-from weather import archive
+from weather import archive, storm_for_session
 
 
 class WeatherArchiveTests(unittest.TestCase):
@@ -20,3 +20,54 @@ class WeatherArchiveTests(unittest.TestCase):
             archive(db, stations, [bulletin, dict(bulletin, rawTAF="synthetic amendment")], later)
             dates = db.execute("SELECT first_observed FROM airport_tafs ORDER BY first_observed").fetchall()
             self.assertEqual(dates, [(t.isoformat(timespec="microseconds"),) for t in (seen, later)])
+
+    def test_session_groups_and_revision_cutoff(self):
+        import exchange_calendars as xcals
+
+        calendar = xcals.get_calendar("XNYS")
+        opening = calendar.session_open("2026-11-27")
+        closing_time = calendar.session_close("2026-11-27")
+        before = opening - timedelta(minutes=5)
+        start, end = int(opening.timestamp()), int(closing_time.timestamp())
+        base = dict(timeFrom=start, timeTo=end, timeBec=None, fcstChange=None,
+                    probability=None, wxString=None, notDecoded=None)
+        bulletin = dict(icaoId="KORD", issueTime=(before - timedelta(hours=1)).isoformat(),
+                        validTimeFrom=start, validTimeTo=end, rawTAF="base", fcsts=[base])
+        cases = [
+            ([base], 0),
+            ([base, dict(base, fcstChange="TEMPO", wxString="+TSRAGR")], 1),
+            ([dict(base, wxString="VCTS")], 1),
+            ([base, dict(base, probability=30, fcstChange="TEMPO", wxString="TSRA")], 0),
+            ([base, dict(base, timeFrom=end, timeTo=end+600, fcstChange="FM", wxString="TS")], 0),
+            ([dict(base, timeTo=end-60), dict(base, fcstChange="TEMPO", wxString="TS")], None),
+            ([dict(base, timeTo=start+10), dict(base, timeFrom=start+11)], None),
+            ([dict(base, notDecoded="unknown")], None),
+        ]
+        for groups, expected in cases:
+            with self.subTest(groups=groups), closing(sqlite3.connect(":memory:")) as db:
+                archive(db, {"KORD"}, [dict(bulletin, fcsts=groups)], before - timedelta(minutes=2))
+                archive(db, {"KORD"}, [dict(bulletin, rawTAF="late amendment")], before)
+                value, _, digest = storm_for_session(db, "KORD", before, opening, closing_time)
+                self.assertEqual(value, expected)
+                self.assertTrue(digest)
+                # The early-close bulletin cannot cover a longer session.
+                self.assertIsNone(storm_for_session(db, "KORD", before, opening,
+                                                    closing_time + timedelta(hours=3))[0])
+
+    def test_no_stale_fallback_or_arbitrary_revision(self):
+        seen = datetime(2026, 11, 24, 12, tzinfo=timezone.utc)
+        before = seen + timedelta(minutes=30)
+        start = before + timedelta(minutes=5)
+        end = start + timedelta(hours=6)
+        a, b = int(start.timestamp()), int(end.timestamp())
+        group = dict(timeFrom=a, timeTo=b, timeBec=None, fcstChange=None, probability=None,
+                     wxString=None, notDecoded=None)
+        item = dict(icaoId="KATL", issueTime=seen.isoformat(), validTimeFrom=a, validTimeTo=b,
+                    fcsts=[group], rawTAF="original")
+        with closing(sqlite3.connect(":memory:")) as db:
+            archive(db, {"KATL"}, [item], seen)
+            revised = dict(item, validTimeTo=b-1, rawTAF="shorter")
+            archive(db, {"KATL"}, [revised], seen + timedelta(minutes=1))
+            self.assertEqual(storm_for_session(db,"KATL",before,start,end)[1], "incomplete validity")
+            archive(db, {"KATL"}, [dict(revised, rawTAF="second")], seen + timedelta(minutes=1))
+            self.assertEqual(storm_for_session(db,"KATL",before,start,end)[1], "ambiguous revision")

@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import re
 from urllib.parse import urlencode
 import csv
 
@@ -39,13 +40,76 @@ def archive(db, stations, bulletins, observed):
     return stations - found
 
 
+def storm_for_session(db, station, before, opens, closes):
+    """Reconstruct one station input from the latest bulletin known before issuance."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='airport_tafs'").fetchone():
+        return None, "no eligible bulletin", None
+    stamp = iso(before)
+    rows = db.execute("""SELECT digest,issued,first_observed,valid_from,valid_to,groups_json
+                         FROM airport_tafs WHERE station=? AND issued<? AND first_observed<?
+                         ORDER BY issued DESC,first_observed DESC LIMIT 2""",
+                      (station, stamp, stamp)).fetchall()
+    if not rows:
+        return None, "no eligible bulletin", None
+    digest, issued, seen, valid_from, valid_to, payload = rows[0]
+    if len(rows) == 2 and rows[1][1:3] == (issued, seen):
+        return None, "ambiguous revision", None
+    start, end = opens.timestamp(), closes.timestamp()
+    if valid_from > start or valid_to < end:
+        return None, "incomplete validity", digest
+
+    intervals = []
+    storm = False
+    for group in json.loads(payload):
+        first, last = group["timeFrom"], group["timeTo"]
+        if not isinstance(first, int) or not isinstance(last, int) or first >= last:
+            return None, "invalid group interval", digest
+        if last <= start or first >= end:
+            continue
+        change = group["fcstChange"]
+        if group["probability"] or (change or "").startswith("PROB"):
+            continue
+        if change not in (None, "FM", "TEMPO") or group["notDecoded"]:
+            return None, "unsupported group", digest
+        if change != "TEMPO":
+            intervals.append((first, last))
+        for token in (group["wxString"] or "").split():
+            if re.fullmatch(r"[+-]?(?:VC)?TS(?:RA|SN|PL|GR|GS|DZ|SG|IC|UP)*", token):
+                storm = True
+    covered_to = start
+    for first, last in sorted(intervals):
+        if first > covered_to:
+            break
+        covered_to = max(covered_to, last)
+    if covered_to < end:
+        return None, "incomplete prevailing groups", digest
+    return int(storm), "covered", digest
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True)
+    parser.add_argument("--session", help="Inspect archived inputs at the session cutoff (YYYY-MM-DD)")
     args = parser.parse_args()
     mapping = Path(__file__).parent / "research/weather-airports-v1.csv"
     with mapping.open() as file:
-        stations = {row["station"] for row in csv.DictReader(file)}
+        exposures = list(csv.DictReader(file))
+    stations = {row["station"] for row in exposures}
+    if args.session:
+        import exchange_calendars as xcals
+        import pandas as pd
+        from forecast import cutoff
+
+        day = pd.Timestamp(datetime.strptime(args.session, "%Y-%m-%d").date())
+        cal = xcals.get_calendar("XNYS")
+        opens, closes = cal.session_open(day), cal.session_close(day)
+        if cutoff(day) > datetime.now(timezone.utc):
+            parser.error("Session cutoff has not elapsed")
+        with closing(sqlite3.connect(Path(args.db).resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            for row in exposures:
+                value, status, digest = storm_for_session(db, row["station"], cutoff(day), opens, closes)
+                print(row["symbol"], row["station"], status, value, digest or "")
+        return
     params = urlencode({"ids": ",".join(sorted(stations)), "format": "json"})
     data = request_bytes("https://aviationweather.gov/api/data/taf?" + params)
     observed = datetime.now(timezone.utc)
