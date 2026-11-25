@@ -2,6 +2,7 @@
 import argparse
 from contextlib import closing
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 
@@ -11,6 +12,7 @@ import pandas as pd
 from forecast import ZONE, cutoff, read_bars, universe
 from main import completed_through, download, ledger, live, require_session_prices, score, write_csv
 from news import headline_score, yahoo
+from prospective import report
 
 
 def initialize(db):
@@ -133,6 +135,7 @@ def run(args, clock=None):
             return
         if action == "settle":
             score(args, bars, clock())
+            print(json.dumps(report(db), indent=2, allow_nan=False))
             return
         healthy = capture(db, pairs)
         args.operational = True

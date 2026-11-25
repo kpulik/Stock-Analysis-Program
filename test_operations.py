@@ -11,6 +11,7 @@ import pandas as pd
 
 from forecast import examples, fit, predict
 from main import ledger, live, score
+from prospective import report
 from operations import audit, capture, initialize, run, timed_action
 
 
@@ -137,6 +138,9 @@ class OperationsTests(unittest.TestCase):
             with closing(ledger(args.db)) as db:
                 self.assertEqual(db.execute("SELECT day FROM missed_sessions").fetchall(), [("2025-11-26",)])
                 self.assertEqual(db.execute("SELECT count(*),count(outcome) FROM forecasts").fetchone(), (12, 12))
+                matched = report(db)
+                self.assertEqual(matched["settled_sessions"], 1)
+                self.assertTrue(all(pair["instrument_days"] == 2 for pair in matched["comparisons"].values()))
                 self.assertEqual(db.execute("SELECT action,status,error FROM price_checks ORDER BY observed_at").fetchall(),
                                  [("issue","error","TimeoutError"), ("issue","ok",None), ("settle","ok",None)])
 
