@@ -106,7 +106,7 @@ class OperationsTests(unittest.TestCase):
                 self.assertGreater(frozen[0][1], 0.5)
 
     def test_timed_recovery_after_holiday_and_price_outage(self):
-        pairs = {"A": "ETF", "B": "ETF"}
+        pairs = {"DAL": "ETF", "UAL": "ETF"}
         days = pd.bdate_range(end="2025-11-28", periods=90)
         days = days.drop(pd.Timestamp("2025-11-27"))
         bars = pd.DataFrame([(d, s, 100., 100 + (i + j) % 3) for i, d in enumerate(days)
@@ -138,6 +138,9 @@ class OperationsTests(unittest.TestCase):
             with closing(ledger(args.db)) as db:
                 self.assertEqual(db.execute("SELECT day FROM missed_sessions").fetchall(), [("2025-11-26",)])
                 self.assertEqual(db.execute("SELECT count(*),count(outcome) FROM forecasts").fetchone(), (12, 12))
+                snapshots = db.execute("SELECT symbol,station,storm,status FROM airport_snapshots ORDER BY symbol")
+                self.assertEqual(snapshots.fetchall(), [("DAL","KATL",None,"no eligible bulletin"),
+                                                        ("UAL","KORD",None,"no eligible bulletin")])
                 matched = report(db)
                 self.assertEqual(matched["settled_sessions"], 1)
                 self.assertTrue(all(pair["instrument_days"] == 2 for pair in matched["comparisons"].values()))

@@ -14,6 +14,7 @@ import pandas as pd
 
 from scipy.special import expit
 
+from weather import record_snapshot
 from forecast import (PRICES, VARIANTS, ZONE, cutoff, examples, fit, read_bars,
                       read_events, replay, session_predictions, universe)
 
@@ -151,6 +152,7 @@ def live(args, pairs, bars, now, clock=None):
         existing = db.execute("SELECT 1 FROM forecasts WHERE day=? LIMIT 1",
                               (day.date().isoformat(),)).fetchone()
         if operational and not existing:
+            record_snapshot(db, pairs, day, now, cal.session_open(day), cal.session_close(day))
             outputs.append(("prices", frozen_prices(db, weekly["prices"], today, day)))
         issued = pd.Timestamp.now(tz=ZONE) if clock is None else clock()
         for name, output in outputs:

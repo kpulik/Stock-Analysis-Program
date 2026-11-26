@@ -86,14 +86,33 @@ def storm_for_session(db, station, before, opens, closes):
     return int(storm), "covered", digest
 
 
+def pilot_exposures():
+    mapping = Path(__file__).parent / "research/weather-airports-v1.csv"
+    with mapping.open() as file:
+        return list(csv.DictReader(file))
+
+
+def record_snapshot(db, pairs, day, before, opens, closes):
+    """Called inside the first operational issue transaction, using its input time."""
+    db.execute("""CREATE TABLE IF NOT EXISTS airport_snapshots(
+        day TEXT, symbol TEXT, station TEXT, weight REAL NOT NULL, snapshot_at TEXT NOT NULL,
+        storm INTEGER, status TEXT NOT NULL, bulletin_digest TEXT,
+        PRIMARY KEY(day,symbol,station))""")
+    for exposure in pilot_exposures():
+        symbol, station = exposure["symbol"], exposure["station"]
+        if symbol in pairs:
+            storm, status, digest = storm_for_session(db, station, before, opens, closes)
+            db.execute("INSERT INTO airport_snapshots VALUES(?,?,?,?,?,?,?,?)",
+                       (str(day.date()), symbol, station, float(exposure["weight"]),
+                        iso(before), storm, status, digest))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True)
     parser.add_argument("--session", help="Inspect archived inputs at the session cutoff (YYYY-MM-DD)")
     args = parser.parse_args()
-    mapping = Path(__file__).parent / "research/weather-airports-v1.csv"
-    with mapping.open() as file:
-        exposures = list(csv.DictReader(file))
+    exposures = pilot_exposures()
     stations = {row["station"] for row in exposures}
     if args.session:
         import exchange_calendars as xcals

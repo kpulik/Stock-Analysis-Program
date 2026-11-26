@@ -71,3 +71,29 @@ class WeatherArchiveTests(unittest.TestCase):
             self.assertEqual(storm_for_session(db,"KATL",before,start,end)[1], "incomplete validity")
             archive(db, {"KATL"}, [dict(revised, rawTAF="second")], seen + timedelta(minutes=1))
             self.assertEqual(storm_for_session(db,"KATL",before,start,end)[1], "ambiguous revision")
+
+    def test_snapshot_uses_input_time_even_when_amendment_precedes_cutoff(self):
+        import exchange_calendars as xcals
+        import pandas as pd
+        from weather import record_snapshot
+
+        day = pd.Timestamp("2026-11-27")
+        cal = xcals.get_calendar("XNYS")
+        opens, closes = cal.session_open(day), cal.session_close(day)
+        before = opens - timedelta(minutes=20)
+        interval = dict(timeFrom=int(opens.timestamp()), timeTo=int(closes.timestamp()),
+                        timeBec=None, fcstChange=None, probability=None, notDecoded=None)
+        bulletin = dict(icaoId="KATL", issueTime=(before - timedelta(hours=1)).isoformat(),
+                        validTimeFrom=interval["timeFrom"], validTimeTo=interval["timeTo"],
+                        fcsts=[dict(interval, wxString="TSRA")], rawTAF="original")
+        with closing(sqlite3.connect(":memory:")) as db:
+            archive(db, {"KATL"}, [bulletin], before - timedelta(minutes=1))
+            archive(db, {"KATL"}, [dict(bulletin, fcsts=[dict(interval, wxString=None)],
+                                        rawTAF="amended")], before + timedelta(minutes=1))
+            db.execute("BEGIN")
+            record_snapshot(db, {"DAL":"IYT"}, day, before, opens, closes)
+            row = db.execute("SELECT storm, status, bulletin_digest FROM airport_snapshots").fetchone()
+            self.assertEqual(row[:2], (1, "covered"))
+            self.assertEqual(row[2], db.execute("SELECT digest FROM airport_tafs ORDER BY first_observed").fetchone()[0])
+            db.rollback()
+            self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='airport_snapshots'").fetchone())
